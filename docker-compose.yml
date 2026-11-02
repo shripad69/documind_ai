@@ -1,42 +1,122 @@
-version: '3.8'
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
 
 services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: document-chatbot-db
+    logging: *default-logging
+    environment:
+      POSTGRES_DB: document_chatbot
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-dev-password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d document_chatbot"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: document-chatbot-redis
+    logging: *default-logging
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: document-chatbot-backend
+    logging: *default-logging
+    env_file:
+      - ./backend/.env
+    # Provider keys and optional model overrides are loaded from backend/.env.
+    environment:
+      DATABASE_URL: postgresql+psycopg://rag:${POSTGRES_PASSWORD:-local-dev-password}@db:5432/document_chatbot
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-local-development-secret-change-before-deploy}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:8080}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      LOG_COLOR: ${LOG_COLOR:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      UPLOAD_DIR: /app/storage
     ports:
       - "8000:8000"
-    environment:
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
     volumes:
-      - ./backend/uploads:/app/uploads
-      - ./backend/chroma_db:/app/chroma_db
-    restart: unless-stopped
+      - document_storage:/app/storage
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/health')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/health', timeout=3).raise_for_status()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: document-chatbot-worker
+    logging: *default-logging
+    command: ["celery", "-A", "app.queue.celery_app", "worker", "--loglevel=INFO", "--queues=ingestion", "--concurrency=2"]
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://rag:${POSTGRES_PASSWORD:-local-dev-password}@db:5432/document_chatbot
+      REDIS_URL: redis://redis:6379/0
+      UPLOAD_DIR: /app/storage
+      LOG_COLOR: ${LOG_COLOR:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - document_storage:/app/storage
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    restart: unless-stopped
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: document-chatbot-frontend
+    logging: *default-logging
     ports:
-      - "80:80"
+      - "8080:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+volumes:
+  postgres_data:
+  redis_data:
+  document_storage:
 
 networks:
   default:

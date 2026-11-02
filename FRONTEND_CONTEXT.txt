@@ -1,0 +1,377 @@
+DOCUMENT CHAT — FRONTEND UI/UX CONTEXT FOR AI AGENTS
+====================================================
+
+PURPOSE
+-------
+This file maps the existing frontend for AI agents that need to understand or
+change its UI, interactions, visual system, or frontend architecture. Source
+files remain authoritative if this document and code differ. This describes
+what currently exists; limitations below are not intended product features.
+
+
+1. PRODUCT AND TECHNICAL SUMMARY
+--------------------------------
+Document Chat is a browser-based document chat application. Signed-in users
+organize documents and conversations into workspaces, ask questions in chat,
+and see source cards when the assistant message has references.
+
+Stack and project shape:
+- React 18, Create React App / react-scripts 5.
+- Plain JavaScript React components, Axios, hand-written CSS.
+- No component library, CSS framework, router package, icon package, markdown
+  renderer, or local image/SVG/font assets.
+- Nginx serves the single-page app and falls back to index.html for app paths.
+- API URL is REACT_APP_API_URL or defaults to http://localhost:8000.
+- Axios sends credentials and has a 360000 ms request timeout.
+
+Frontend source map:
+- frontend/src/App.js: app shell, path handling, auth/session state, workspace,
+  chat and document loading/actions, document polling.
+- frontend/src/components/AuthPage.js: login and registration.
+- frontend/src/components/Sidebar.js: brand, workspace/chat navigation, account.
+- frontend/src/components/ChatView.js: chat header, empty state, messages,
+  citations, send behavior, composer.
+- frontend/src/components/ResourcesPanel.js: upload and document management.
+- frontend/src/App.css: almost all visual styling, tokens, breakpoints, motion.
+- frontend/src/index.css: global body and root sizing/font smoothing.
+- frontend/src/api.js: Axios setup and error-message extraction.
+- frontend/src/index.js: React root and styles bootstrap.
+- frontend/public/index.html: page title, description and root mount.
+- frontend/Dockerfile, frontend/nginx.conf: production frontend serving.
+
+
+2. BRAND, TYPOGRAPHY, COLORS, ICONS
+-----------------------------------
+Brand name displayed: “Document Chat”. HTML title: “Document Chatbot”. There is
+no logo image: the brand mark is a rounded green square with a white bold “D”,
+implemented by .brand-mark. Sidebar uses .brand-mark.small. It appears on the
+auth card and loading screen too. The assistant/welcome symbol is the Unicode
+character “✳”; this is decorative, not an asset.
+
+Fonts are imported from Google Fonts in App.css:
+- DM Sans (400, 500, 600, 700) for body/UI; base size 14px.
+- Manrope (400, 500, 600, 700, 800) for headings and selected labels.
+- There are no local font files; browser sans-serif fallbacks apply if the
+  external font request cannot load.
+
+Root CSS variables in App.css:
+- --ink: #202b26 (main text)
+- --muted: #79847e
+- --line: #e8ece8 (borders/dividers)
+- --paper: #fff (main surface)
+- --wash: #f7f9f6
+- --green: #246b52 (brand/action)
+- --green-dark: #18583f (primary hover)
+- --mint: #e7f2ec (soft accent)
+- --danger: #b33d43
+- --shadow: 0 18px 60px rgba(29,48,38,.14)
+
+Overall style: bright, calm, document/workspace-oriented. White surfaces,
+pale gray-green side/background surfaces, dark green actions, fine borders,
+small radii on controls, larger radii on cards/panels, restrained shadows,
+muted small labels, generous whitespace in chat. There is no dark theme, theme
+switch, or persisted theme preference. Focus-visible controls receive a 3px
+mint outline with offset.
+
+Icons are Unicode glyphs, not an icon library: plus “＋”, close “×”, folder-like
+“▱”, resources/document “▤”, chat “◌”, arrows “↑”, logout “↪”, star “✳”, and
+ellipsis “···”. For small matching changes, reuse the visual approach. A larger
+redesign should choose and consistently apply an icon system.
+
+
+3. PAGE LAYOUT AND GLOBAL STATES
+--------------------------------
+#root fills the viewport and hides overflow. Signed-in .app-shell is a full
+viewport horizontal flex layout with hidden overflow:
+1. Persistent left .sidebar.
+2. Flexible .main-column, containing global error and chat/no-workspace view.
+3. ResourcesPanel overlay, conditionally mounted at shell level.
+
+Top-level rendered states:
+- Loading: centered D mark and “Loading your workspace…”.
+- Unauthenticated: AuthPage in login or signup mode.
+- Authenticated with a workspace: Sidebar and ChatView, with optional resources
+  panel overlay.
+- Authenticated without a workspace: Sidebar plus centered “Your knowledge
+  starts here.” message and “Create a workspace” button.
+- Dismissible global error banner near the top center of the main column.
+
+Navigation is custom and small, not React Router. usePath() reads
+window.location.pathname, listens to popstate, and navigates with history
+pushState. Recognized paths are /login and /signup. Unauthenticated users on
+other paths are sent to /login; signed-in users on either auth path are sent to
+/. Workspace and chat selection live only in React state, not URL segments, so
+refresh restores a preferred/first workspace and chat rather than a URL-specific
+selection.
+
+Initialization requests current user, workspaces, selected workspace chats and
+documents, then selected chat messages. It prefers a previously selected ID if
+still available; otherwise the first record. Document data is polled every five
+seconds while signed in with an active workspace, to surface indexing progress.
+There is no dedicated list-loading skeleton or navigation spinner.
+
+
+4. AUTHENTICATION
+-----------------
+AuthPage uses a centered card on a pale green-gray background with a subtle
+radial pale-green glow in the upper-left. Card: max-width 410px, white, 37px/38px
+padding, thin border, 17px corners, subtle shadow.
+
+Card content order:
+1. D mark.
+2. “YOUR PRIVATE KNOWLEDGE SPACE” eyebrow.
+3. Mode heading: “Create your account” or “Welcome back”.
+4. Mode-specific one-line description.
+5. Email input with email autocomplete and required validation.
+6. Password with current/new-password autocomplete, required and min length 10.
+7. Inline error banner if request fails.
+8. Full width green submit button, busy label “Please wait…”.
+9. Centered signup/login switch.
+
+POST /api/auth/register or /api/auth/login gets {email, password}. Then the
+parent reloads auth/workspace data and navigation goes to /. Errors use
+getErrorMessage. There is no password reveal, reset, OAuth, or marketing image.
+
+
+5. SIDEBAR AND NAVIGATION
+-------------------------
+Desktop sidebar is 272px wide, fixed flex basis, pale gray-green, right divider,
+vertical layout, padding 22px 14px 12px.
+
+Contents from top to bottom:
+- Small D mark and “Document Chat”.
+- WORKSPACES heading and plus button. Plus opens browser prompt for workspace
+  name.
+- Workspace rows: folder glyph and ellipsized title. Active row uses pale green
+  fill. Only active workspace shows ellipsis (rename prompt) and x (delete
+  confirmation) controls.
+- Empty workspace helper text if none exist.
+- If active workspace: active title divider/label, Resources button, CHATS
+  heading with plus, scrollable chat list, “New chat” button.
+- Bottom account row (pushed down with margin-top:auto): circular avatar from
+  first email character, truncated email, logout arrow.
+
+Workspace selection clears messages/error, loads its chats and documents, then
+selects prior active chat if present or first chat. Chat selection clears
+messages/error and loads its message history. Workspace create/rename/delete
+use native window.prompt/confirm rather than custom dialogs. Delete confirmation
+says the workspace's documents and chats will also be deleted. New chat actions
+exist both at the chats-heading plus and bottom button. Creating one without an
+active workspace yields a global error. Logout posts to API, then clears client
+state even if the server request fails.
+
+Chat rows use a small “◌” glyph, ellipsized title, and pale green active state.
+The chat list may scroll. Hover is a subtle pale green fill.
+
+On <=560px the sidebar collapses to a 66px icon rail. Most words, active
+workspace label, workspace action buttons, account email and logout button are
+hidden; glyph controls remain. There is no expand/collapse control or dedicated
+tooltip system.
+
+
+6. CHAT SCREEN AND MESSAGE FLOW
+-------------------------------
+ChatView fills .main-column as a vertical flex layout:
+A) Header, 61px tall desktop / 54px phone. Left breadcrumb: workspace title,
+   slash, chat title. Right Resources button. Long titles truncate. At <=760px
+   the text “Resources” hides but its glyph remains.
+B) Flexible independently scrollable conversation.
+C) Composer area fixed at bottom of chat layout.
+
+Empty chat state: centered welcome group with mint rounded-square ✳, eyebrow
+“YOUR KNOWLEDGE, IN CONVERSATION”, heading “What would you like to know?”,
+workspace-specific prompt, and outlined “Add resources ↗” button. It appears
+when messages are empty.
+
+Messages use a centered stack max-width 790px. Each message is a horizontal row
+with 29px rounded avatar and flexible content. User avatar “Y” on warm beige;
+assistant avatar “✳” on mint. Labels are “You” and “Assistant”. Text is 14px,
+line-height 1.72 and white-space pre-wrap. It is plain text: no Markdown/HTML
+rendering. Rows have vertical padding.
+
+Source cards render only for assistant messages with non-empty source_references.
+They follow a fine top separator and uppercase “Sources” label. Each card has a
+resource glyph, file name, and optional page number plus snippet. Cards wrap.
+Current UI deduplicates by document_id, so several cited chunks from one file
+collapse to one visible card (first reference wins). Citation tags in the answer
+remain plain text; no inline link/highlighting parser exists. Snippet is
+single-line truncated at 430px.
+
+Send flow:
+- Textarea placeholder is “Ask anything about your documents…”.
+- Enter submits; Shift+Enter inserts newline.
+- Green arrow button disabled for blank trimmed text or while sending.
+- Textarea disabled if there is no active chat or while sending.
+- Submit clears the input and appends optimistic user message.
+- POST /api/chats/{chat_id}/messages with {content}.
+- Success replaces optimistic row with server user and assistant rows, then
+  refreshes chat list/title.
+- Failure shows inline chat error, removes optimistic message and restores the
+  attempted text in the input.
+- Bottom scroll is triggered smoothly on messages/sending state changes.
+- Sending state displays “Searching your workspace and preparing an answer…”
+  with pulsing ✳.
+- Composer helper advises that answers are grounded in workspace docs and
+  important details should be verified in sources.
+
+Composer styling: max-width 790px, light border, 12px corners, slight shadow,
+textarea grows to max-height 150px. Focus adds mint border and soft halo. Send
+button is 31px square with green fill/white arrow; disabled state is pale gray.
+
+
+7. RESOURCE PANEL AND FILE INTERACTIONS
+---------------------------------------
+ResourcesPanel is mounted when resourcesOpen and an active workspace exist. It
+is a fixed z-index 10 full-screen .modal-scrim with translucent dark green
+backdrop. White panel is right aligned, full viewport height, width min(470px,
+100%), shadowed, padded 26px 25px (21px 17px at phone width). Backdrop click
+closes only if click target is the backdrop. Panel entrance animation slides
+15px and fades from .6 opacity over .18s ease-out. There is no exit animation,
+Escape handling, focus trap, or dialog ARIA role.
+
+Panel contents:
+1. WORKSPACE LIBRARY eyebrow, “Resources” heading, workspace title, close x.
+2. Dashed upload zone, min-height 164px. Upload arrow tile, title state
+   (“Drop files to add them” / “Adding resources…”), browse action, helper
+   “PDF and DOCX · up to 20 files · 25 MB each”.
+3. Optional inline error.
+4. DOCUMENTS heading and count.
+5. Scrollable document rows.
+6. Empty resource helper when no documents.
+7. Footer note that documents become searchable after background indexing.
+
+The hidden file input accepts .pdf and .docx, multiple. Files can be selected
+with browse or dropped on the label; drag/drop prevents browser default. Files
+are appended to FormData under repeated “files” key and POSTed to
+/api/workspaces/{workspace_id}/documents. Busy state dims/disables the zone and
+changes text. After upload, documents are refreshed; parent polls every 5 sec.
+Input value is cleared after request so same file can be uploaded again.
+Delete asks window.confirm, sends DELETE, then refreshes.
+
+Each resource row contains generic file tile, truncated filename, status text,
+colored status dot, and an x delete action that appears on hover:
+- indexed -> “Ready to chat”, green dot
+- failed -> error_message or “Processing failed”, red dot
+- otherwise -> “Processing…”, amber dot
+
+Implementation mismatch to preserve awareness of: accepted types are PDF and
+DOCX, but each tile currently says “PDF” regardless of actual filename.
+
+
+8. STYLE, RESPONSIVE BEHAVIOR, MOTION, ERRORS
+---------------------------------------------
+Global: border-box sizing, body margin 0 and white background, DM Sans, default
+14px. Buttons/inputs/textareas inherit font. Button cursor is pointer, disabled
+buttons fade. Focus-visible outline is 3px solid #a8d5be, offset 2px. Root fills
+100vw/100vh and hides overflow; body min-width 320px. App shell min-height is
+560px. Scrolling is delegated to conversation, chat list, and resources list.
+
+Breakpoints:
+- <=760px: sidebar width 220px; reduced side padding; header side padding 17px;
+  conversation side padding 16px; composer side padding 14px; welcome heading
+  24px; hide Resources word leaving glyph.
+- <=560px: sidebar width 66px; hide most text/actions and account logout/email;
+  keep navigation glyphs. Header 54px. Crumb tighter/smaller. Conversation top
+  padding 20px. Welcome heading 21px, welcome supporting text max-width 280px.
+  Message avatar gap tightens. Resources panel padding reduces.
+- No mobile drawer, separate mobile route, or tablet-specific navigation.
+
+Animations:
+- pulse: thinking ✳ reaches opacity .35 and scale .85 halfway through a 1.3s
+  infinite cycle.
+- slidein: resource panel begins 15px right and opacity .6, then normal over
+  .18s ease-out.
+- No skeleton/shimmer, page transition, reduced-motion override, or other
+  explicit animation is present.
+
+Errors use pale red background, red border/text and rounded corners. Global
+error is top-center in main column at z-index 4 with dismiss x. Auth/resource
+errors are inline. Chat request error appears near bottom of conversation.
+Error text is API detail, then JS message, then generic fallback.
+
+
+9. API CONTRACT USED BY FRONTEND
+-------------------------------
+Axios settings: REACT_APP_API_URL or http://localhost:8000, withCredentials
+true, timeout 360000 ms. getErrorMessage returns response.data.detail, then
+error.message, then “Something went wrong.”
+
+Requests issued:
+- GET /api/auth/me
+- POST /api/auth/login {email, password}
+- POST /api/auth/register {email, password}
+- POST /api/auth/logout
+- GET /api/workspaces
+- POST /api/workspaces {title, description: ""}
+- PATCH /api/workspaces/{workspace_id} {title}
+- DELETE /api/workspaces/{workspace_id}
+- GET /api/workspaces/{workspace_id}/chats
+- POST /api/workspaces/{workspace_id}/chats {title: "New chat"}
+- GET /api/workspaces/{workspace_id}/documents (also polled each 5 sec)
+- POST /api/workspaces/{workspace_id}/documents (FormData, files key)
+- DELETE /api/workspaces/{workspace_id}/documents/{document_id}
+- GET /api/chats/{chat_id}/messages
+- POST /api/chats/{chat_id}/messages {content}
+
+Message objects are expected to include id, role, content, source_references.
+Reference objects can include document_id, file_name, page_number, snippet,
+and backend may also include citation_id/chunk_id. UI reads document_id,
+file_name, page_number, snippet.
+
+
+10. ACCESSIBILITY AND CURRENT GAPS
+----------------------------------
+Existing positives: native form/button/label elements, required input fields,
+autocomplete hints, disabled states, focus-visible styling, title attributes on
+some icon actions, and hidden file input inside a label.
+
+Known gaps in current source, not implemented product features:
+- No React Router or workspace/chat routes in URL.
+- No dark mode/theme preferences.
+- No image brand asset or consistent icon set.
+- No Markdown formatting for answers.
+- Citation markers are plain text; reference cards are separate from text.
+- Source cards group references by document_id.
+- At phone width, text is hidden from many controls; controls do not gain
+  explicit accessible labels/tooltips in component markup (some desktop actions
+  have title attributes).
+- Resource overlay has no Escape support, focus management, dialog semantics,
+  or closing animation.
+- Workspace prompts/deletes use browser-native prompt/confirm.
+- No loading skeletons for workspace/chat/resource lists.
+- Resource tile says PDF for DOCX too.
+- index.html theme-color is #000000 even though the UI is light.
+- Google-hosted font requests need network access.
+
+When changing the UI, preserve workspace scoping and server-backed chat/resource
+state. Keep empty collections usable. Add accessible labels when updating
+icon-only controls. If changing the visual system, update tokens, components,
+and responsive states together instead of introducing arbitrary one-off colors.
+
+
+11. BUILD AND DEPLOYMENT
+------------------------
+Development: npm start. Production build: npm run build. Test script is CRA's
+npm test. Frontend Docker build uses node:18-alpine with npm ci and npm run
+build; nginx:alpine serves the static build. Nginx uses SPA index.html fallback,
+gzip, basic security headers, a /health response, and one-year immutable cache
+for static assets. Dockerfile does not inject API URL itself; set
+REACT_APP_API_URL at build time when API is not on localhost.
+
+
+12. SOURCE READING ORDER
+------------------------
+For exact JSX structure and interaction, read:
+1. frontend/src/App.js
+2. frontend/src/components/Sidebar.js
+3. frontend/src/components/ChatView.js
+4. frontend/src/components/ResourcesPanel.js
+5. frontend/src/components/AuthPage.js
+6. frontend/src/App.css
+7. frontend/src/index.css and frontend/public/index.html
+8. frontend/src/api.js and frontend/package.json
+9. frontend/Dockerfile and frontend/nginx.conf
+
+App.css is highly compressed into long lines. Use the class names and component
+map above when locating styles. Preserve current appearance and breakpoints
+unless the requested change is a redesign.

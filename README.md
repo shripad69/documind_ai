@@ -4,7 +4,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-Vector_DB-FF6B6B)](https://www.trychroma.com/)
-[![Gemini](https://img.shields.io/badge/Google_Gemini-2.0_Flash-4285F4?logo=google&logoColor=white)](https://ai.google.dev/)
+[![OpenRouter](https://img.shields.io/badge/LLM-OpenRouter-6467F2)](https://openrouter.ai/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -16,7 +16,7 @@
 
 Document Chatbot is a full-stack **RAG (Retrieval-Augmented Generation)** application that allows users to upload PDF/DOC/DOCX files and ask context-aware questions about their content.
 
-The project combines **FastAPI**, **ChromaDB**, and **Google Gemini 2.0 Flash** for semantic retrieval and AI-powered responses, with a **React** frontend for real-time document conversations.
+The current workspace app combines **FastAPI**, **PostgreSQL/pgvector**, and **OpenRouter** for isolated semantic retrieval and AI-powered responses, with a **React** frontend for document conversations. Gemini is retained only for document and query embeddings.
 
 ## 🏗️ How It Works
 
@@ -28,7 +28,7 @@ flowchart LR
     D --> E[(ChromaDB<br/>Vector Store)]
     F[User Query] --> G[Vector Retrieval<br/>Top-k similar chunks]
     E --> G
-    G --> H[Google Gemini 2.0 Flash<br/>LLM]
+    G --> H[OpenRouter chat completions<br/>Gemma 4 31B free]
     H --> I[AI Response]
 ```
 
@@ -36,7 +36,7 @@ flowchart LR
 2. **Parsing & Chunking** — FastAPI parses the document and splits it into semantic chunks.
 3. **Embedding** — Each chunk is embedded (OpenAI API with sentence-transformers fallback) and stored in ChromaDB.
 4. **Retrieval** — On each user query, the top-k most relevant chunks are retrieved by vector similarity.
-5. **Generation** — Retrieved chunks + user query are sent to Gemini 2.0 Flash to generate the final, grounded answer.
+5. **Generation** — Retrieved workspace chunks, recent chat history, and the current question are sent to OpenRouter for a grounded answer with source citations.
 
 ## 🖼️ Screenshots
 
@@ -59,7 +59,7 @@ flowchart LR
 ### 🤖 AI & Retrieval
 - ChromaDB vector search
 - Context-aware, grounded responses
-- Google Gemini 2.0 Flash integration
+- OpenRouter-compatible LLM answer generation (default: `google/gemma-4-31b-it:free`)
 - Smart query preprocessing
 - Hybrid embedding pipeline (OpenAI → Sentence-Transformers fallback)
 
@@ -80,41 +80,32 @@ flowchart LR
 |-------|-----------|
 | **Backend** | FastAPI · Uvicorn · Python 3.10+ |
 | **Frontend** | React 18 · Axios · CSS3 |
-| **Vector DB** | ChromaDB |
-| **LLM** | Google Gemini 2.0 Flash |
-| **Embeddings** | OpenAI API (primary) · sentence-transformers (fallback) |
+| **Vector DB** | PostgreSQL · pgvector |
+| **LLM** | OpenRouter (default: Gemma 4 31B free) |
+| **Embeddings** | Google Gemini `gemini-embedding-001` |
 | **Document Parsing** | PyMuPDF (fitz) · python-docx |
 | **Deployment** | Docker · docker-compose · Nginx |
 | **CI/CD** | Automated build / test / deploy workflow |
 
 ## 🚀 Quick Start
 
-**Windows (easiest):** Double-click `START_PROJECT.bat` — both backend and frontend will start in separate windows.
-
-**Manual:**
+The Docker Compose setup starts the API, ingestion worker, PostgreSQL/pgvector, Redis, and frontend together:
 
 ```bash
-# Backend
-cd backend
-pip install -r requirements.txt
-# Create .env with GOOGLE_API_KEY (see .env.example)
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-
-# Frontend (in a new terminal)
-cd frontend
-npm install
-npm start
+cp backend/.env.example backend/.env
+# Set GOOGLE_API_KEY and OPENROUTER_API_KEY in backend/.env
+./restart_project.sh
 ```
 
-Access the app at **http://localhost:3000** (frontend) and **http://127.0.0.1:8000** (API).
+Access the app at **http://localhost:8080** and API docs at **http://localhost:8000/docs**. See [CONFIGURATION.md](CONFIGURATION.md) for provider configuration.
 
 ## ⚙️ Detailed Setup
 
 ### Prerequisites
 - Python 3.10+
 - Node.js 16+ and npm
-- Google AI Studio API key ([get one here](https://makersuite.google.com/app/apikey))
-- (Optional) OpenAI API key for better embeddings
+- Google AI Studio API key for embeddings ([get one here](https://aistudio.google.com/apikey))
+- OpenRouter API key for answer generation ([get one here](https://openrouter.ai/keys))
 
 ### Backend
 
@@ -129,11 +120,12 @@ source venv/bin/activate       # macOS/Linux
 pip install -r requirements.txt
 ```
 
-Create a `.env` file in the `backend/` directory:
+Create `backend/.env` from `backend/.env.example` and set:
 
 ```env
-GOOGLE_API_KEY=your-google-api-key-here
-OPENAI_API_KEY=your-openai-api-key-here   # optional
+GOOGLE_API_KEY=your-google-api-key-here   # embeddings
+OPENROUTER_API_KEY=your-openrouter-api-key-here  # answer generation
+# OPENROUTER_MODEL=google/gemma-4-31b-it:free
 ```
 
 Run the server:
@@ -182,11 +174,9 @@ Interactive API docs available at **http://127.0.0.1:8000/docs** (Swagger UI).
 
 ## 📝 Notes & Current Limitations
 
-- Documents are processed and stored in a local ChromaDB instance (`backend/chroma_db/`)
-- **Conversations are stored in memory** — not persisted across server restarts
-- Uploaded files are stored in `backend/uploads/`
-- Each conversation is tied to a specific document for accurate, grounded answers
-- First run may take longer as embedding models are downloaded
+- PostgreSQL/pgvector stores workspaces, documents, chat history, and embeddings; Redis/Celery handle background ingestion.
+- The current chat endpoint returns complete responses; it does not stream tokens.
+- OpenRouter free endpoints may apply rate limits or become temporarily unavailable. The backend retries transient failures twice with bounded exponential backoff.
 
 ## 🐛 Troubleshooting
 
@@ -195,7 +185,7 @@ Interactive API docs available at **http://127.0.0.1:8000/docs** (Swagger UI).
 
 - Ensure all Python dependencies are installed (`pip install -r requirements.txt`)
 - Check that port 8000 is not in use
-- Verify `backend/.env` exists with a valid `GOOGLE_API_KEY`
+- Verify `backend/.env` contains valid `GOOGLE_API_KEY` and `OPENROUTER_API_KEY` values
 </details>
 
 <details>
@@ -209,15 +199,12 @@ Interactive API docs available at **http://127.0.0.1:8000/docs** (Swagger UI).
 <details>
 <summary><b>Embedding / chat issues</b></summary>
 
-- If OpenAI API is not available, sentence-transformers will be used automatically
-- First run may take longer as embedding models are downloaded
-- Make sure the Gemini API key is valid and active
+- A valid Gemini key is required for PDF embeddings.
+- Make sure the Gemini key is valid for embeddings and the OpenRouter key/model has access to answer generation
 </details>
 
 ## 🚧 Future Improvements
 
-- Persistent conversation storage (PostgreSQL / Redis)
-- User authentication & multi-user support
 - Streaming AI responses (Server-Sent Events)
 - Hybrid search (BM25 + vector search)
 - Document summarization workflows

@@ -1,9 +1,13 @@
 import os
+import logging
+import time
 import uuid
-import re
 from pathlib import Path
 from typing import List, Tuple
 from datetime import datetime
+from app.services.citation_pipeline import chunk_pages as sentence_chunk_pages
+
+logger = logging.getLogger(__name__)
 
 # PDF Extraction
 try:
@@ -29,6 +33,13 @@ try:
 except ImportError:
     OPENAI_AVAILABLE = False
 
+try:
+    from google import genai
+    from google.genai import types as genai_types
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+
 # Vector DB
 try:
     import chromadb
@@ -52,13 +63,25 @@ class DocumentProcessor:
              ))
              
         self.collection = self.client.get_or_create_collection(name="documents")
+        self._zero_embedding_warning_logged = False
         
         # Initialize OpenAI or Fallback
         self.openai_client = None
         if OPENAI_AVAILABLE:
             api_key = os.getenv("OPENAI_API_KEY")
             if api_key:
-                self.openai_client = OpenAI(api_key=api_key)
+                self.openai_client = OpenAI(api_key=api_key, timeout=20.0, max_retries=0)
+
+        self.gemini_embedding_client = None
+        google_api_key = os.getenv("GOOGLE_API_KEY")
+        if GEMINI_AVAILABLE and google_api_key:
+            self.gemini_embedding_client = genai.Client(
+                api_key=google_api_key,
+                http_options=genai_types.HttpOptions(
+                    timeout=30_000,
+                    retry_options=genai_types.HttpRetryOptions(attempts=1),
+                ),
+            )
         
         self.embedding_model = None
         if not self.openai_client:
@@ -68,25 +91,146 @@ class DocumentProcessor:
             except ImportError:
                 print("Warning: No local embedding model available.")
 
-    def get_embedding(self, text: str) -> List[float]:
-        """Generate embedding using OpenAI or local model"""
-        # Clean text slightly before embedding to improve quality
-        text = text.replace("\n", " ")
-        
+    def _embedding_dimensions(self) -> int:
+        """Keep new vectors compatible with the existing Chroma collection."""
+        try:
+            existing = self.collection.get(limit=1, include=["embeddings"])
+            vectors = existing.get("embeddings")
+            if vectors is not None and len(vectors):
+                return len(vectors[0])
+        except Exception as error:
+            logger.warning("embedding.dimension_lookup_failed error_type=%s", type(error).__name__)
+        return 1536
+
+    def get_embeddings(self, texts: List[str], task_type: str = "RETRIEVAL_DOCUMENT") -> List[List[float]]:
+        """Generate compatible embeddings using OpenAI, Gemini, then local fallback."""
+        if not texts:
+            return []
+        normalized_texts = [text.replace("\n", " ") for text in texts]
+
         if self.openai_client:
+            embedding_started = time.perf_counter()
             try:
                 response = self.openai_client.embeddings.create(
                     model="text-embedding-3-small",
-                    input=text
+                    input=normalized_texts,
                 )
-                return response.data[0].embedding
+                logger.info(
+                    "embedding.openai_completed duration_ms=%d batch_size=%d dimensions=%d",
+                    round((time.perf_counter() - embedding_started) * 1000),
+                    len(response.data),
+                    len(response.data[0].embedding),
+                )
+                return [item.embedding for item in response.data]
             except Exception as e:
-                print(f"OpenAI embedding error: {e}, using fallback.")
-        
+                status_code = getattr(e, "status_code", None)
+                if status_code == 401:
+                    logger.error(
+                        "openai.embedding_auth_failed status_code=401; disabling this embedding client"
+                    )
+                else:
+                    logger.warning(
+                        "openai.embedding_failed status_code=%s error_type=%s; disabling this embedding client",
+                        status_code,
+                        type(e).__name__,
+                    )
+                # Repeated embedding attempts against a rejected or unreachable provider
+                # otherwise add up across every retrieval fallback and can stall chat.
+                self.openai_client = None
+
+        if self.gemini_embedding_client:
+            embedding_started = time.perf_counter()
+            try:
+                response = self.gemini_embedding_client.models.embed_content(
+                    model="gemini-embedding-001",
+                    contents=normalized_texts,
+                    config=genai_types.EmbedContentConfig(
+                        output_dimensionality=self._embedding_dimensions(),
+                        task_type=task_type,
+                    ),
+                )
+                vectors = [embedding.values for embedding in response.embeddings]
+                logger.info(
+                    "embedding.gemini_completed duration_ms=%d batch_size=%d dimensions=%d task_type=%s",
+                    round((time.perf_counter() - embedding_started) * 1000),
+                    len(vectors),
+                    len(vectors[0]) if vectors else 0,
+                    task_type,
+                )
+                if len(vectors) == len(normalized_texts):
+                    return vectors
+                raise RuntimeError("Gemini returned an unexpected number of embeddings.")
+            except Exception as error:
+                logger.exception(
+                    "embedding.gemini_failed batch_size=%d error_type=%s",
+                    len(normalized_texts),
+                    type(error).__name__,
+                )
+
         if self.embedding_model:
-            return self.embedding_model.encode(text).tolist()
-            
-        return [0.0] * 384  # Dummy fallback if absolutely nothing works (should not happen)
+            return [vector.tolist() for vector in self.embedding_model.encode(normalized_texts)]
+
+        if not self._zero_embedding_warning_logged:
+            logger.error("embedding.no_provider_available returning_zero_vectors=true")
+            self._zero_embedding_warning_logged = True
+        dimensions = self._embedding_dimensions()
+        return [[0.0] * dimensions for _ in normalized_texts]
+
+    def get_embedding(self, text: str, task_type: str = "RETRIEVAL_QUERY") -> List[float]:
+        return self.get_embeddings([text], task_type=task_type)[0]
+
+    def repair_zero_embeddings(self, document_id: str) -> int:
+        """Re-embed legacy document chunks that were stored as zero vectors."""
+        if not self.gemini_embedding_client or not document_id:
+            return 0
+        try:
+            records = self.collection.get(
+                where={"document_id": document_id},
+                include=["documents", "embeddings"],
+            )
+            documents = records.get("documents") or []
+            embeddings = records.get("embeddings")
+            ids = records.get("ids") or []
+            if not documents or embeddings is None or len(ids) != len(documents):
+                return 0
+
+            zero_indices = [
+                index for index, vector in enumerate(embeddings)
+                if vector is None or not any(value != 0 for value in vector)
+            ]
+            if not zero_indices:
+                return 0
+
+            logger.info(
+                "embedding.repair_started document_id=%s zero_vector_chunks=%d",
+                document_id,
+                len(zero_indices),
+            )
+            repair_started = time.perf_counter()
+            for offset in range(0, len(zero_indices), 32):
+                batch_indices = zero_indices[offset:offset + 32]
+                vectors = self.get_embeddings(
+                    [documents[index] for index in batch_indices],
+                    task_type="RETRIEVAL_DOCUMENT",
+                )
+                self.collection.update(
+                    ids=[ids[index] for index in batch_indices],
+                    embeddings=vectors,
+                )
+            logger.info(
+                "embedding.repair_completed document_id=%s repaired_chunks=%d duration_ms=%d",
+                document_id,
+                len(zero_indices),
+                round((time.perf_counter() - repair_started) * 1000),
+            )
+            return len(zero_indices)
+        except Exception as error:
+            logger.exception(
+                "embedding.repair_failed document_id=%s error_type=%s",
+                document_id,
+                type(error).__name__,
+            )
+            return 0
 
     def extract_text_from_pdf(self, file_path: Path) -> Tuple[str, List[Tuple[int, str]]]:
         """Extract text using PyMuPDF (fitz) - superior quality"""
@@ -126,68 +270,12 @@ class DocumentProcessor:
 
     def extract_text_from_docx(self, file_path: Path) -> str:
         doc = docx.Document(file_path)
-        return "\n".join([p.text for p in doc.paragraphs])
+        return "\n\n".join(p.text.strip() for p in doc.paragraphs if p.text.strip())
 
-    def recursive_chunk_text(self, text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
-        """
-        Smart recursive splitting.
-        Priority:
-        1. Double newlines (Paragraphs)
-        2. Single newlines
-        3. Sentences (. )
-        4. Words
-        """
-        if len(text) <= chunk_size:
-            return [text]
-            
-        # 1. Split by paragraphs
-        parts = text.split('\n\n')
-        chunks = []
-        current_chunk = ""
-        
-        for part in parts:
-            # If adding this part exceeds chunk size, verify if we need to split the PART itself
-            if len(current_chunk) + len(part) + 2 > chunk_size:
-                # If current_chunk is big enough, push it
-                if current_chunk:
-                    chunks.append(current_chunk)
-                    # Start new chunk with overlap (last N chars)
-                    overlap_text = current_chunk[-overlap:] if overlap < len(current_chunk) else current_chunk
-                    current_chunk = overlap_text + "\n\n" + part
-                else:
-                    # The part ITSELF is huge. Split it strictly.
-                    current_chunk = part
-            else:
-                if current_chunk:
-                    current_chunk += "\n\n" + part
-                else:
-                    current_chunk = part
-                    
-            # If current_chunk became too huge after adding (cases where one huge para exists)
-            # FORCE split it using regex (sentences)
-            if len(current_chunk) > chunk_size:
-                # Naive sentence split
-                sentences = re.split(r'(?<=[.!?])\s+', current_chunk)
-                
-                temp_chunk = ""
-                for sent in sentences:
-                    if len(temp_chunk) + len(sent) > chunk_size:
-                        if temp_chunk:
-                            chunks.append(temp_chunk)
-                            temp_chunk = sent # No complex overlap here to keep it simple
-                        else:
-                            # Sentence itself is huge? Just chop it.
-                            chunks.append(sent[:chunk_size])
-                            temp_chunk = sent[chunk_size:] 
-                    else:
-                        temp_chunk += " " + sent
-                
-                current_chunk = temp_chunk # Leftover
-                
-        if current_chunk:
-            chunks.append(current_chunk)
-            
-        return chunks
+    def recursive_chunk_text(self, text: str, chunk_size: int = 800, overlap: int = 2) -> List[str]:
+        """Compatibility wrapper around the shared sentence-boundary chunker."""
+        del overlap  # Legacy callers passed a character count; overlap is now sentence based.
+        return [content for _, content in sentence_chunk_pages([(1, text)], size=chunk_size)]
 
     def process_document(self, file_path: Path, filename: str) -> str:
         document_id = str(uuid.uuid4())
@@ -208,32 +296,20 @@ class DocumentProcessor:
         if not hasattr(self, '_document_pages'): self._document_pages = {}
         self._document_pages[document_id] = pages_data
         
-        # Smart Chunking
-        chunks = self.recursive_chunk_text(text)
+        # Split each extracted page independently so citation page metadata stays exact.
+        page_chunks = sentence_chunk_pages(pages_data or [(1, text)], size=800, overlap_sentences=2)
+        chunks = [content for _, content in page_chunks]
         
         # Prepare for DB
-        embeddings = []
+        embeddings = self.get_embeddings(chunks, task_type="RETRIEVAL_DOCUMENT")
         ids = []
         metadatas = []
         docs = []
         
-        for i, chunk in enumerate(chunks):
-            # Try to map chunk back to page number (heuristic)
-            page_num = 1
-            if pages_data:
-                # Simple check: where does this chunk mostly live?
-                # We can't be 100% accurate without complex mapping, but let's try matching first 20 chars
-                snippet = chunk[:50].strip()
-                if snippet:
-                    for p_num, p_text in pages_data:
-                        if snippet in p_text:
-                            page_num = p_num
-                            break
+        for i, (page_num, chunk) in enumerate(page_chunks):
             
-            emb = self.get_embedding(chunk)
             chunk_id = f"{document_id}_{i}"
             
-            embeddings.append(emb)
             ids.append(chunk_id)
             metadatas.append({
                 "document_id": document_id,
@@ -258,7 +334,7 @@ class DocumentProcessor:
         document_id: If provided, only search within this specific document
         """
         try:
-            q_emb = self.get_embedding(query)
+            q_emb = self.get_embedding(query, task_type="RETRIEVAL_QUERY")
             
             # Build query with optional document_id filter
             query_params = {
@@ -276,7 +352,13 @@ class DocumentProcessor:
                     # Fallback to simple equality (older ChromaDB versions)
                     query_params["where"] = {"document_id": document_id}
             
+            search_started = time.perf_counter()
             results = self.collection.query(**query_params)
+            logger.info(
+                "vector_search.completed duration_ms=%d requested_results=%d",
+                round((time.perf_counter() - search_started) * 1000),
+                n_results,
+            )
             
             if not results['documents']:
                 return []
@@ -287,7 +369,7 @@ class DocumentProcessor:
             return list(zip(docs, dists))
             
         except Exception as e:
-            print(f"Search failed: {e}")
+            logger.exception("vector_search.failed error_type=%s", type(e).__name__)
             return []
 
 # Singleton

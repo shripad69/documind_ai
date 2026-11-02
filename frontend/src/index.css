@@ -1,27 +1,89 @@
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+:root {
+  /* Pitch-Black OLED Surfaces */
+  --bg-canvas: #000000;
+  --bg-sidebar: #030306;
+  --bg-primary: #000000;
+  --bg-elevated: #08080E;
+  --bg-interactive: #0F0F1A;
+  --bg-active: #161426;
+  --bg-glass: rgba(8, 8, 14, 0.84);
+
+  /* Hairline Borders & Violet Dividers */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.10);
+  --border-strong: rgba(168, 85, 247, 0.28);
+  --border-accent: rgba(139, 92, 246, 0.55);
+
+  /* Typography Hierarchy */
+  --text-primary: #F8FAFC;
+  --text-secondary: #A1A1AA;
+  --text-tertiary: #71717A;
+  --text-accent: #C084FC;
+
+  /* Primary Brand Palette */
+  --violet-950: #1E1035;
+  --violet-900: #2E1065;
+  --violet-700: #6D28D9;
+  --violet-600: #7C3AED;
+  --violet-500: #8B5CF6;
+  --violet-400: #A78BFA;
+  --violet-300: #C4B5FD;
+  --fuchsia-500: #D946EF;
+  --indigo-500: #6366F1;
+
+  /* Semantic Aliases */
+  --accent-primary: #8B5CF6;
+  --accent-primary-hover: #7C3AED;
+  --accent-secondary: #A855F7;
+  --accent-glow: rgba(139, 92, 246, 0.16);
+  --accent-glow-strong: rgba(168, 85, 247, 0.28);
+  --accent-gradient: linear-gradient(135deg, #8B5CF6 0%, #A855F7 50%, #6366F1 100%);
+  --accent-subtle-bg: rgba(139, 92, 246, 0.12);
+
+  /* Evidence Highlight */
+  --highlight-bg: rgba(139, 92, 246, 0.22);
+  --highlight-border: #A855F7;
+  --highlight-text: #F3E8FF;
+
+  /* Semantic Status */
+  --status-ready: #A855F7;
+  --status-ready-bg: rgba(168, 85, 247, 0.14);
+  --status-warning: #F59E0B;
+  --status-warning-bg: rgba(245, 158, 11, 0.14);
+  --status-danger: #F43F5E;
+  --status-danger-bg: rgba(244, 63, 94, 0.14);
+
+  /* Shadows, Radii & Motion */
+  --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.75);
+  --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.85);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.95);
+  --shadow-violet: 0 0 28px rgba(139, 92, 246, 0.22);
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  margin: 0;
-  padding: 0;
-}
+* { box-sizing: border-box; }
+html, body, #root { width: 100%; height: 100%; margin: 0; }
+body { min-width: 320px; overflow: hidden; background: var(--bg-canvas); color: var(--text-primary); font-family: 'Plus Jakarta Sans', sans-serif; font-size: 13px; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+button, input, textarea { font: inherit; }
+button { color: inherit; cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .54; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--violet-400); outline-offset: 3px; }
+::selection { background: rgba(139, 92, 246, 0.32); color: var(--text-primary); }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #292735; border: 2px solid transparent; border-radius: 20px; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background-color: #443a5e; }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
-}
-
-#root {
-  width: 100%;
-  height: 100vh;
-  overflow: hidden;
-}
-
+@keyframes shimmer { 100% { transform: translateX(100%); } }
+@keyframes pulse { 50% { opacity: .42; transform: scale(.86); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes rise-in { from { opacity: 0; transform: translateY(9px) scale(.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes ambient-drift { 0%, 100% { transform: translate3d(0,0,0); } 50% { transform: translate3d(1.5%,-1%,0); } }
