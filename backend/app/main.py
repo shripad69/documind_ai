@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app import logging_config  # Configure structured application logs at startup.
-from app.routers import auth, chats, workspaces
+from app.routers import auth, chats, mindmap, workspaces
 
 app = FastAPI(title="Document Chatbot Workspace API", version="2.0.0")
 app.add_middleware(
@@ -17,6 +17,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(workspaces.router)
 app.include_router(chats.router)
+app.include_router(mindmap.router)
 
 
 @app.get("/api/health")

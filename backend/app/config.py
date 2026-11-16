@@ -16,18 +16,31 @@ class Settings:
     frontend_origin: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:8080")
     cookie_secure: bool = os.getenv("COOKIE_SECURE", "false").lower() == "true"
     gemini_api_key: str | None = os.getenv("GOOGLE_API_KEY")
+    gemini_mindmap_model: str = os.getenv("GEMINI_MINDMAP_MODEL", "gemini-3.8-flash")
     openrouter_api_key: str | None = os.getenv("OPENROUTER_API_KEY")
-    openrouter_model: str = os.getenv("OPENROUTER_MODEL", "google/gemma-4-31b-it:free")
+    openrouter_model: str = os.getenv("OPENROUTER_MODEL", "google/gemma-4-26b-a4b-it:free")
     openrouter_fallback_models: tuple[str, ...] = tuple(
         model.strip()
         for model in os.getenv(
             "OPENROUTER_FALLBACK_MODELS",
-            "nvidia/nemotron-3.5-lightning:free,nvidia/nemotron-3-ultra-550b-a55b:free",
+            "google/gemma-4-31b-it:free,nvidia/nemotron-3.5-lightning:free,nvidia/nemotron-3-ultra-550b-a55b:free,openrouter/free",
         ).split(",")
         if model.strip()
     )
     openrouter_base_url: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     openrouter_timeout_seconds: float = float(os.getenv("OPENROUTER_TIMEOUT_SECONDS", "90"))
+    retrieval_mode: str = os.getenv("RETRIEVAL_MODE", "hybrid_rrf")
+    RETRIEVAL_MODE: str = os.getenv("RETRIEVAL_MODE", "hybrid_rrf")
+    embedding_model_name: str = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-m3")
+    embedding_device: str = os.getenv("EMBEDDING_DEVICE", "cpu")
+    embedding_batch_size: int = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
+    embedding_dimensions: int = int(os.getenv("EMBEDDING_DIMENSIONS", "1024"))
+    embedding_cache_dir: str = os.getenv("EMBEDDING_CACHE_DIR", "/app/models")
+
+    @property
+    def GOOGLE_API_KEY(self) -> str | None:
+        return self.gemini_api_key
+
 
 
 settings = Settings()

@@ -54,10 +54,13 @@ services:
       LOG_COLOR: ${LOG_COLOR:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       UPLOAD_DIR: /app/storage
+      EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cpu}
+      EMBEDDING_CACHE_DIR: /app/models
     ports:
       - "8000:8000"
     volumes:
       - document_storage:/app/storage
+      - model_cache:/app/models
     depends_on:
       db:
         condition: service_healthy
@@ -86,8 +89,11 @@ services:
       UPLOAD_DIR: /app/storage
       LOG_COLOR: ${LOG_COLOR:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cpu}
+      EMBEDDING_CACHE_DIR: /app/models
     volumes:
       - document_storage:/app/storage
+      - model_cache:/app/models
     depends_on:
       backend:
         condition: service_healthy
@@ -117,6 +123,7 @@ volumes:
   postgres_data:
   redis_data:
   document_storage:
+  model_cache:
 
 networks:
   default:

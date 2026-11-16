@@ -9,7 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    OPENROUTER_MODEL=google/gemma-4-31b-it:free \
+    OPENROUTER_MODEL=google/gemma-4-26b-a4b-it:free \
     OPENROUTER_BASE_URL=https://openrouter.ai/api/v1 \
     OPENROUTER_TIMEOUT_SECONDS=90
 
@@ -22,14 +22,16 @@ RUN apt-get update && apt-get install -y \
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir --timeout 120 --retries 10 -r requirements.txt
+# Install Python dependencies with CPU-optimized PyTorch
+RUN pip install --no-cache-dir --timeout 120 --retries 10 \
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    -r requirements.txt
 
 # Copy application code
 COPY . .
 
 # Run the API and ingestion worker as an unprivileged user.
-RUN mkdir -p uploads chroma_db /app/storage \
+RUN mkdir -p uploads chroma_db /app/storage /app/models \
     && useradd --create-home --uid 10001 app \
     && chown -R app:app /app
 USER app

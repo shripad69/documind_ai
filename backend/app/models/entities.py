@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
+import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
@@ -14,8 +15,16 @@ from sqlalchemy import (
     Uuid,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import UserDefinedType
 
 from app.db import Base
+
+
+class TSVectorType(UserDefinedType):
+    """Custom SQLAlchemy type mapping PostgreSQL tsvector."""
+
+    def get_col_spec(self, **kw):
+        return "tsvector"
 
 
 def utcnow() -> datetime:
@@ -75,6 +84,7 @@ class Document(Base):
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     workspace: Mapped[Workspace] = relationship(back_populates="documents")
     chunks: Mapped[list["DocumentChunk"]] = relationship(back_populates="document", cascade="all, delete-orphan")
+    mind_map: Mapped["DocumentMindMap | None"] = relationship(back_populates="document", cascade="all, delete-orphan", uselist=False)
 
     __table_args__ = (CheckConstraint("status in ('processing', 'indexed', 'failed')", name="ck_documents_status"),)
 
@@ -89,7 +99,14 @@ class DocumentChunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer)
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     content: Mapped[str] = mapped_column(Text)
-    embedding: Mapped[list[float]] = mapped_column(Vector(384))
+    embedding: Mapped[list[float]] = mapped_column(Vector(1024))
+    tsv_content = mapped_column(
+        TSVectorType(),
+        nullable=True,
+        server_default=sa.FetchedValue(),
+        server_onupdate=sa.FetchedValue(),
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     document: Mapped[Document] = relationship(back_populates="chunks")
 
@@ -102,6 +119,24 @@ class DocumentChunk(Base):
             postgresql_ops={"embedding": "vector_cosine_ops"},
             postgresql_with={"m": 16, "ef_construction": 64},
         ),
+    )
+
+
+class DocumentMindMap(Base):
+    __tablename__ = "document_mindmaps"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), unique=True, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
+    tree_data: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    document: Mapped[Document] = relationship(back_populates="mind_map")
+
+    __table_args__ = (
+        Index("ix_mindmaps_tenant_scope", "user_id", "workspace_id", "document_id"),
     )
 
 

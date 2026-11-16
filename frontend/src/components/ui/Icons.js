@@ -1,4 +1,4 @@
-import React, { useId } from 'react';
+import React from 'react';
 
 const paths = {
   Folder: <><path d="M3.5 6.5h6l2 2h9v10a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/><path d="M3.5 8.5h17"/></>,
@@ -26,35 +26,54 @@ const paths = {
   AlertCircle: <><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.1"/></>,
   X: <><path d="m6 6 12 12M18 6 6 18"/></>,
   ExternalLink: <><path d="M13 5h6v6M19 5l-9 9"/><path d="M17 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h5"/></>,
+  MindMap: <><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="19" cy="18" r="2.5"/><circle cx="12" cy="12" r="2"/><path d="M7.5 12h2.5M14 12l2.8-4.5M14 12l2.8 4.5"/></>,
+  Maximize: <><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></>,
+  Minimize: <><path d="M4 14h6v6m10-10h-6V4m0 6 7-7M9 15l-7 7"/></>,
+  Download: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></>,
+  ChevronsUpDown: <><path d="m7 15 5 5 5-5M7 9l5-5 5 5"/></>,
+  ZoomIn: <><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35M11 8v6M8 11h6"/></>,
+  ZoomOut: <><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35M8 11h6"/></>,
 };
 
 export function Icon({ name, size = 18, strokeWidth = 1.75, className = '', ...props }) {
   if (name === 'BrandLogo') return <DocuMindLogo size={size} className={className} />;
   if (name === 'FileBadgePdf') return <FileTypeLogo fileName="source.pdf" size={size} className={className} />;
   if (name === 'FileBadgeDocx') return <FileTypeLogo fileName="source.docx" size={size} className={className} />;
-  return <svg aria-hidden="true" className={`icon ${className}`} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" {...props}>{paths[name] || paths.FileText}</svg>;
+  return (
+    <svg
+      aria-hidden="true"
+      className={`icon ${className}`}
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      {paths[name] || paths.FileText}
+    </svg>
+  );
 }
 
-function safeId(value) { return value.replace(/[^a-zA-Z0-9_-]/g, ''); }
-
 export function DocuMindLogo({ size = 32, className = '' }) {
-  const rawId = useId();
-  const id = safeId(rawId);
-  return <svg aria-hidden="true" className={`brand-logo documind-logo ${className}`} width={size} height={size} viewBox="0 0 32 32" fill="none">
-    <defs>
-      <linearGradient id={`docu-border-${id}`} x1="1" y1="1" x2="31" y2="31" gradientUnits="userSpaceOnUse"><stop stopColor="#A855F7"/><stop offset="1" stopColor="#6366F1"/></linearGradient>
-      <linearGradient id={`docu-prism-${id}`} x1="7" y1="6" x2="26" y2="26" gradientUnits="userSpaceOnUse"><stop stopColor="#C084FC"/><stop offset=".52" stopColor="#8B5CF6"/><stop offset="1" stopColor="#6366F1"/></linearGradient>
-      <filter id={`docu-glow-${id}`} x="-35%" y="-35%" width="170%" height="170%"><feGaussianBlur stdDeviation="1.25" result="blur"/><feColorMatrix in="blur" type="matrix" values="0.6 0 0 0 0.45 0 0.35 0 0 0.18 0 0 0.8 0 0.97 0 0 0 .46 0"/><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-    </defs>
-    <rect x=".5" y=".5" width="31" height="31" rx="9" fill="#120B24" stroke={`url(#docu-border-${id})`}/>
-    <g filter={`url(#docu-glow-${id})`} stroke={`url(#docu-prism-${id})`} strokeWidth="1.15" strokeLinejoin="round" strokeLinecap="round">
-      <path d="m16 6.7 8 4.55v9.15L16 25l-8-4.6v-9.15z" fill="rgba(139,92,246,.08)"/>
-      <path d="m8 11.25 8 4.6 8-4.6M16 15.85V25"/>
-      <path d="m12 9 8 4.6v4.55l-4 2.3-4-2.3z" opacity=".76"/>
-      <path d="m12 9 4 2.3L20 9" opacity=".76"/>
-      <circle cx="16" cy="15.85" r="1.3" fill="#E9D5FF" stroke="none"/>
-    </g>
-  </svg>;
+  return (
+    <svg
+      aria-hidden="true"
+      className={`brand-logo documind-logo ${className}`}
+      width={size}
+      height={size}
+      viewBox="0 0 32 32"
+      fill="none"
+    >
+      <rect x="1" y="1" width="30" height="30" rx="8" fill="#111620" stroke="rgba(56, 189, 248, 0.45)" strokeWidth="1.2" />
+      <path d="M9 8h8a6 6 0 0 1 6 6v0a6 6 0 0 1-6 6H9z" fill="rgba(56, 189, 248, 0.08)" stroke="#38BDF8" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M9 8v16M13.5 8v16" stroke="#94A3B8" strokeWidth="1.3" strokeLinecap="round" />
+      <circle cx="21" cy="21.5" r="2" fill="#38BDF8" />
+    </svg>
+  );
 }
 
 export function BrandLogo({ size = 36, className = '' }) {
@@ -62,38 +81,56 @@ export function BrandLogo({ size = 36, className = '' }) {
 }
 
 export function AssistantAvatarLogo({ size = 28, className = '', animated = false }) {
-  const rawId = useId();
-  const id = safeId(rawId);
-  return <svg aria-hidden="true" className={`assistant-avatar-logo ${animated ? 'is-animated' : ''} ${className}`} width={size} height={size} viewBox="0 0 28 28" fill="none">
-    <defs><linearGradient id={`assistant-spark-${id}`} x1="5" y1="4" x2="24" y2="25" gradientUnits="userSpaceOnUse"><stop stopColor="#C084FC"/><stop offset="1" stopColor="#7C3AED"/></linearGradient></defs>
-    <rect x=".5" y=".5" width="27" height="27" rx="8" fill="#150D2A" stroke="rgba(168,85,247,.35)"/>
-    <g className="assistant-sparkle" fill={`url(#assistant-spark-${id})`}>
-      <path d="M14 5.2c.55 4.6 1.3 7.05 6.1 8.8-4.8 1.75-5.55 4.2-6.1 8.8-.55-4.6-1.3-7.05-6.1-8.8 4.8-1.75 5.55-4.2 6.1-8.8Z"/>
-      <path d="M21.1 4.2c.23 1.9.55 2.9 2.55 3.62-2 .72-2.32 1.72-2.55 3.62-.23-1.9-.55-2.9-2.55-3.62 2-.72 2.32-1.72 2.55-3.62Z" opacity=".86"/>
-      <path d="M6.8 17.3c.18 1.45.42 2.22 1.95 2.77-1.53.55-1.77 1.32-1.95 2.77-.18-1.45-.42-2.22-1.95-2.77 1.53-.55 1.77-1.32 1.95-2.77Z" opacity=".72"/>
-    </g>
-  </svg>;
+  return (
+    <svg
+      aria-hidden="true"
+      className={`assistant-avatar-logo ${className}`}
+      width={size}
+      height={size}
+      viewBox="0 0 28 28"
+      fill="none"
+    >
+      <rect x="1" y="1" width="26" height="26" rx="7" fill="#171D28" stroke="rgba(56, 189, 248, 0.3)" strokeWidth="1.2" />
+      <rect x="7" y="7" width="14" height="14" rx="3.5" fill="none" stroke="#38BDF8" strokeWidth="1.4" opacity="0.9" />
+      <path d="M14 4.5v5M14 18.5v5M4.5 14h5M18.5 14h5" stroke="#38BDF8" strokeWidth="1.3" strokeLinecap="round" />
+      <circle cx="14" cy="14" r="1.6" fill="#F0F6FC" />
+    </svg>
+  );
 }
 
 export function UserAvatarBadge({ identity = '', size = 32, className = '' }) {
   const initial = String(identity || 'U').trim().charAt(0).toUpperCase() || 'U';
-  return <span className={`user-avatar-badge ${className}`} style={{ width: size, height: size }} aria-hidden="true">{initial}</span>;
+  return (
+    <span className={`user-avatar-badge ${className}`} style={{ width: size, height: size }} aria-hidden="true">
+      {initial}
+    </span>
+  );
 }
 
 export function FileTypeLogo({ fileName = '', size = 36, className = '' }) {
   const extension = String(fileName).split('.').pop()?.toLowerCase();
   const type = extension === 'pdf' ? 'PDF' : extension === 'docx' ? 'DOCX' : extension === 'doc' ? 'DOC' : 'FILE';
   const theme = type === 'PDF' ? 'pdf' : type === 'FILE' ? 'file' : 'docx';
-  return <span className={`file-type-logo ${theme} ${className}`} style={{ width: size, height: size }} role="img" aria-label={`${type} file`}>
-    <svg aria-hidden="true" width={Math.round(size * .58)} height={Math.round(size * .58)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M6 2.8h8l4 4v14.4H6z"/><path d="M14 2.8v4h4"/>
-      {type === 'PDF' ? <><path d="M8.5 15.5h7M8.5 18h5"/><path d="M8.5 10.5h2a1.5 1.5 0 0 1 0 3h-2z"/></> : <><path d="M8.5 11.5h7M8.5 14.5h7M8.5 17.5h5"/></>}
-    </svg>
-    <b>{type}</b>
-  </span>;
+  return (
+    <span className={`file-type-logo ${theme} ${className}`} style={{ width: size, height: size }} role="img" aria-label={`${type} file`}>
+      <svg aria-hidden="true" width={Math.round(size * 0.58)} height={Math.round(size * 0.58)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M6 2.8h8l4 4v14.4H6z"/><path d="M14 2.8v4h4"/>
+        {type === 'PDF' ? (
+          <><path d="M8.5 15.5h7M8.5 18h5"/><path d="M8.5 10.5h2a1.5 1.5 0 0 1 0 3h-2z"/></>
+        ) : (
+          <><path d="M8.5 11.5h7M8.5 14.5h7M8.5 17.5h5"/></>
+        )}
+      </svg>
+      <b>{type}</b>
+    </span>
+  );
 }
 
-export const BrandWordmark = ({ compact = false }) => <span className={`brand-wordmark ${compact ? 'compact' : ''}`}>DOCU MIND<span className="ai-badge">.ai</span></span>;
+export const BrandWordmark = ({ compact = false }) => (
+  <span className={`brand-wordmark ${compact ? 'compact' : ''}`}>
+    DocuMind<span className="brand-submark">RAG</span>
+  </span>
+);
 
 function namedIcon(name) {
   const Component = props => <Icon name={name} {...props} />;

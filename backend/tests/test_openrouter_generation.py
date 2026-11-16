@@ -53,9 +53,9 @@ def test_generation_sends_configured_chat_completion_and_returns_text(monkeypatc
     assert answer == "Grounded answer [Source 1]"
     assert calls[0]["model"] == "test/model:free"
     assert calls[0]["messages"] == messages
-    assert calls[0]["max_tokens"] == 2048
+    assert calls[0]["max_tokens"] == 4096
     assert calls[0]["extra_body"] == {
-        "reasoning": {"effort": "low"},
+        "reasoning": {"effort": "none"},
         "models": ["test/fallback:free"],
     }
 
@@ -135,3 +135,80 @@ def test_timeout_uses_bounded_retries_then_returns_safe_error(monkeypatch):
     with pytest.raises(OpenRouterGenerationError, match="timed out or could not connect"):
         rag.generate([], uuid4())
     assert len(calls) == 3
+
+
+def test_empty_completion_with_reasoning_exhaustion_falls_back_to_next_candidate(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "openrouter_model", "test/reasoning-model:free")
+    monkeypatch.setattr(settings, "openrouter_fallback_models", ("test/fallback:free",))
+    rag, calls = rag_with_responses(
+        empty_completion(finish_reason="length", reasoning="Thinking took all tokens"),
+        completion("Answer without reasoning exhaustion"),
+    )
+
+    answer = rag.generate([], uuid4())
+
+    assert answer == "Answer without reasoning exhaustion"
+    assert len(calls) == 2
+    assert calls[0]["model"] == "test/reasoning-model:free"
+    assert calls[1]["model"] == "test/fallback:free"
+
+
+def test_provider_404_not_found_falls_back_to_next_candidate(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "openrouter_model", "test/deprecated-model:free")
+    monkeypatch.setattr(settings, "openrouter_fallback_models", ("test/working-model:free",))
+    rag, calls = rag_with_responses(
+        api_status_error(404, message="No such model found"),
+        completion("Answer from working model"),
+    )
+
+    answer = rag.generate([], uuid4())
+
+    assert answer == "Answer from working model"
+    assert len(calls) == 2
+    assert calls[0]["model"] == "test/deprecated-model:free"
+    assert calls[1]["model"] == "test/working-model:free"
+
+
+def test_provider_429_upstream_rate_limit_falls_back_to_next_candidate(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "openrouter_model", "test/rate-limited-model:free")
+    monkeypatch.setattr(settings, "openrouter_fallback_models", ("test/alternate-model:free",))
+    rag, calls = rag_with_responses(
+        api_status_error(429, message="Provider returned error: RESOURCE_EXHAUSTED upstream rate limit"),
+        completion("Answer from alternate model"),
+    )
+
+    answer = rag.generate([], uuid4())
+
+    assert answer == "Answer from alternate model"
+    assert len(calls) == 2
+    assert calls[0]["model"] == "test/rate-limited-model:free"
+    assert calls[1]["model"] == "test/alternate-model:free"
+
+
+def test_payload_serialization_verifies_effort_none_and_models_fallback_order(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "openrouter_model", "primary/model:free")
+    monkeypatch.setattr(
+        settings,
+        "openrouter_fallback_models",
+        ("fallback/one:free", "fallback/two:free", "openrouter/free"),
+    )
+    rag, calls = rag_with_responses(completion("Answer"))
+
+    answer = rag.generate([], uuid4())
+
+    assert answer == "Answer"
+    assert len(calls) == 1
+    assert calls[0]["model"] == "primary/model:free"
+    assert calls[0]["max_tokens"] == 4096
+    assert calls[0]["extra_body"] == {
+        "reasoning": {"effort": "none"},
+        "models": ["fallback/one:free", "fallback/two:free", "openrouter/free"],
+    }

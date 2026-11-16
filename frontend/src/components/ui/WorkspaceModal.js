@@ -16,7 +16,7 @@ export default function WorkspaceModal({ open, workspace, onClose, onSave }) {
   }
   return <Modal open={open} onClose={onClose} title={workspace ? 'Rename workspace' : 'Create workspace'} className="workspace-dialog" labelledBy="workspace-title">
     <form onSubmit={submit}><label className="field-label" htmlFor="workspace-name">Workspace name</label><input id="workspace-name" autoFocus maxLength={160} value={title} onChange={event => setTitle(event.target.value)} placeholder="e.g. Product research" />
-      <div className="field-meta">{error ? <span className="field-error">{error}</span> : <span>Give your documents a home.</span>}<span>{title.length}/160</span></div>
+      <div className="field-meta">{error ? <span className="field-error">{error}</span> : <span>Organize related documents and chats.</span>}<span>{title.length}/160</span></div>
       <footer className="dialog-actions"><button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-button" disabled={busy}>{busy && <span className="spinner" />}{busy ? 'Saving…' : workspace ? 'Save changes' : 'Create workspace'}</button></footer>
     </form>
   </Modal>;

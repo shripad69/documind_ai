@@ -1,5 +1,5 @@
 # Routers package
 
-from app.routers import auth, chats, workspaces
+from app.routers import auth, chats, mindmap, workspaces
 
-__all__ = ["auth", "chats", "workspaces"]
+__all__ = ["auth", "chats", "mindmap", "workspaces"]

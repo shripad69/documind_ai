@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.entities import ChatMessage, Document, DocumentChunk
+from app.services.embedding_service import embed_query
+from app.services.hybrid_search import HybridSearcher, RetrievalResult
 from app.services.openrouter import OpenRouterAnswerGenerator
 from app.services.citation_pipeline import (
     CITATION_TAG_RE,
@@ -16,27 +18,14 @@ from app.services.citation_pipeline import (
 )
 
 logger = logging.getLogger(__name__)
-EMBEDDING_MODEL = "gemini-embedding-001"
 
 
 class WorkspaceRAG:
     def __init__(self):
-        if not settings.gemini_api_key:
-            raise RuntimeError("GOOGLE_API_KEY is not configured for document embeddings.")
         if not settings.openrouter_api_key:
             raise RuntimeError("OPENROUTER_API_KEY is not configured for answer generation.")
-        from google import genai
-        from google.genai import types
-
-        self.embedding_client = genai.Client(
-            api_key=settings.gemini_api_key,
-            http_options=types.HttpOptions(
-                timeout=120_000,
-                retry_options=types.HttpRetryOptions(attempts=1),
-            ),
-        )
-        self.embedding_types = types
         self.answer_generator = OpenRouterAnswerGenerator()
+        self.hybrid_searcher = HybridSearcher()
 
     def answer(
         self,
@@ -48,47 +37,41 @@ class WorkspaceRAG:
         history: list[ChatMessage],
     ) -> tuple[str, list[dict[str, Any]]]:
         started = time.perf_counter()
-        query_embedding = self.embedding_client.models.embed_content(
-            model=EMBEDDING_MODEL,
-            contents=question,
-            config=self.embedding_types.EmbedContentConfig(
-                output_dimensionality=384,
-                task_type="RETRIEVAL_QUERY",
-            ),
-        ).embeddings[0].values
+        query_embedding = embed_query(question)
 
-        # Tenant and workspace constraints are applied before vector ranking.
-        rows = db.execute(
-            select(DocumentChunk, Document.file_name)
-            .join(Document, Document.id == DocumentChunk.document_id)
-            .where(
-                DocumentChunk.user_id == user_id,
-                DocumentChunk.workspace_id == workspace_id,
-                Document.user_id == user_id,
-                Document.workspace_id == workspace_id,
-                Document.status == "indexed",
-            )
-            .order_by(DocumentChunk.embedding.cosine_distance(query_embedding))
-            .limit(8)
-        ).all()
+        # --- Hybrid Retrieval (BM25 + Dense Vector + RRF) ---
+        retrieval_mode = settings.RETRIEVAL_MODE
+        retrieval_result = self.hybrid_searcher.search(
+            db=db,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            query=question,
+            query_embedding=query_embedding,
+            mode=retrieval_mode,
+            top_k=8,
+        )
         logger.info(
-            "workspace_rag.retrieval_completed user_id=%s workspace_id=%s result_chunks=%d duration_ms=%d",
+            "workspace_rag.retrieval_completed user_id=%s workspace_id=%s mode=%s result_chunks=%d latency_ms=%.1f (BM25=%d, Vector=%d)",
             user_id,
             workspace_id,
-            len(rows),
-            round((time.perf_counter() - started) * 1000),
+            retrieval_mode,
+            len(retrieval_result.chunks),
+            retrieval_result.latency_ms,
+            retrieval_result.bm25_candidate_count,
+            retrieval_result.vector_candidate_count,
         )
 
         citation_registry: dict[str, dict[str, Any]] = {}
-        for index, (chunk, file_name) in enumerate(rows, start=1):
+        for index, rc in enumerate(retrieval_result.chunks, start=1):
             citation_id = f"chunk_{index}"
             citation_registry[citation_id] = {
-                "document_id": str(chunk.document_id),
-                "document_name": file_name,
-                "chunk_id": str(chunk.id),
-                "page_number": chunk.page_number,
-                "content": chunk.content,
+                "document_id": str(rc.document_id),
+                "document_name": rc.file_name,
+                "chunk_id": str(rc.chunk_id),
+                "page_number": rc.page_number,
+                "content": rc.content,
             }
+
         context = format_context_for_prompt(citation_registry)
         messages: list[dict[str, str]] = [
             {
@@ -116,13 +99,18 @@ class WorkspaceRAG:
                 messages.append({"role": message.role, "content": history_content})
         messages.append({"role": "user", "content": question})
 
-        answer = self.answer_generator.generate(messages, workspace_id)
+        answer = self.answer_generator.generate(
+            messages,
+            workspace_id,
+            max_tokens=4096,
+            reasoning_effort="none",
+        )
         logger.info(
             "workspace_rag.answer_completed user_id=%s workspace_id=%s requested_model=%s result_chunks=%d duration_ms=%d",
             user_id,
             workspace_id,
             settings.openrouter_model,
-            len(rows),
+            len(retrieval_result.chunks),
             round((time.perf_counter() - started) * 1000),
         )
         answer, references = resolve_citations(answer, citation_registry, query=question)

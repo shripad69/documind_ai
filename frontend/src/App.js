@@ -9,6 +9,7 @@ import WorkspaceModal from './components/ui/WorkspaceModal';
 import Toast from './components/ui/Toast';
 import { SidebarSkeleton } from './components/ui/Skeleton';
 import { BrandLogo, BrandWordmark, Icon } from './components/ui/Icons';
+import MindMapOverlay from './components/mindmap/MindMapOverlay';
 import './App.css';
 
 const WORKSPACE_STORAGE_KEY = 'documind.activeWorkspace';
@@ -50,6 +51,8 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [resourcesOpen, setResourcesOpen] = useState(false);
+  const [mindMapDoc, setMindMapDoc] = useState(null);
+  const [pendingMindMapQuery, setPendingMindMapQuery] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadingWorkspaces, setLoadingWorkspaces] = useState(false);
   const [loadingChats, setLoadingChats] = useState(false);
@@ -241,7 +244,24 @@ export default function App() {
   }
   async function authenticated() { setLoading(true); setToast(null); await initialize(); }
 
-  if (loading) return <div className="loading-screen"><aside className="loading-sidebar"><div className="loading-sidebar-brand"><BrandLogo size={30} /><BrandWordmark /></div><div className="section-heading"><span>WORKSPACES</span></div><SidebarSkeleton rows={3} /><div className="section-heading loading-chat-label"><span>CHATS</span></div><SidebarSkeleton rows={4} /></aside><main className="loading-main"><div className="loading-brand"><BrandLogo size={39} /><BrandWordmark /></div><span>Opening your workspace…</span><i className="loading-line" /></main></div>;
+  async function handleMindMapQuery(queryText) {
+    setMindMapDoc(null);
+    let targetChat = chat;
+    if (!targetChat && workspace) {
+      try {
+        const response = await api.post(`/api/workspaces/${workspace.id}/chats`, { title: 'New chat' });
+        targetChat = response.data;
+        setChats(current => [targetChat, ...current]);
+        setChat(targetChat);
+      } catch (err) {
+        setToast({ type: 'error', message: getErrorMessage(err) });
+        return;
+      }
+    }
+    setPendingMindMapQuery({ text: queryText, timestamp: Date.now() });
+  }
+
+  if (loading) return <div className="loading-screen"><aside className="loading-sidebar"><div className="loading-sidebar-brand"><BrandLogo size={30} /><BrandWordmark /></div><div className="section-heading"><span>Workspaces</span></div><SidebarSkeleton rows={3} /><div className="section-heading loading-chat-label"><span>Chats</span></div><SidebarSkeleton rows={4} /></aside><main className="loading-main"><div className="loading-brand"><BrandLogo size={38} /><BrandWordmark /></div><span>Opening workspace…</span><i className="loading-line" /></main></div>;
   if (!user) return <AuthPage mode={path === '/signup' ? 'signup' : 'login'} navigate={navigate} onAuthenticated={authenticated} initialError={toast?.type === 'error' ? toast.message : ''} />;
 
   return <div className="app-shell">
@@ -251,12 +271,13 @@ export default function App() {
       onResources={() => setResourcesOpen(true)} onCreateChat={createChat} onChat={selectChat} onLogout={logout} onBrandHome={goToLatestChat} onCopyChatLink={copyChatLink} />
     {sidebarCollapsed && <button className="sidebar-reopen" onClick={() => setSidebarCollapsed(false)} aria-label="Open sidebar" title="Open sidebar"><Icon name="PanelLeftOpen" /></button>}
     <div className={`main-column ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
-      {workspace ? <ChatView workspace={workspace} chat={chat} messages={messages} setMessages={setMessages} documents={documents} user={user} onResources={() => setResourcesOpen(true)} onToggleResources={() => setResourcesOpen(value => !value)} onCreateChat={createChat} focusComposerRequest={composerFocusRequest}
+      {workspace ? <ChatView workspace={workspace} chat={chat} messages={messages} setMessages={setMessages} documents={documents} user={user} onResources={() => setResourcesOpen(true)} onToggleResources={() => setResourcesOpen(value => !value)} onCreateChat={createChat} focusComposerRequest={composerFocusRequest} pendingQuery={pendingMindMapQuery} onClearPendingQuery={() => setPendingMindMapQuery(null)}
         onToggleSidebar={() => { if (window.matchMedia('(max-width: 768px)').matches) setMobileSidebarOpen(true); else setSidebarCollapsed(false); }}
         onChatUpdated={async () => { try { const response = await api.get(`/api/workspaces/${workspace.id}/chats`); setChats(response.data || []); const updated = response.data.find(item => item.id === chat?.id); if (updated) setChat(updated); } catch (_) { /* the next navigation will reload the chat list */ } }} />
-        : <div className="no-workspace"><div className="no-workspace-logo"><BrandLogo size={47} /></div><p className="eyebrow">A PRIVATE KNOWLEDGE SPACE</p><h1>Make room for better questions.</h1><p>Create a workspace to bring documents and conversations together.</p><button className="primary-button" onClick={() => setWorkspaceDialog({ mode: 'create' })}><Icon name="Plus" size={16} />Create a workspace</button></div>}
+        : <div className="no-workspace"><div className="no-workspace-logo"><BrandLogo size={42} /></div><p className="eyebrow">Workspace Setup</p><h1>Connect your primary documents</h1><p>Create an isolated workspace to organize documents and interrogate them with verifiable citations.</p><button className="primary-button" onClick={() => setWorkspaceDialog({ mode: 'create' })}><Icon name="Plus" size={16} />Create workspace</button></div>}
     </div>
-    <ResourcesPanel open={resourcesOpen} workspace={workspace} documents={documents} refresh={async () => { if (!workspace) return; const response = await api.get(`/api/workspaces/${workspace.id}/documents`); setDocuments(response.data || []); }} onClose={() => setResourcesOpen(false)} onDeleteDocument={requestDeleteDocument} />
+    <ResourcesPanel open={resourcesOpen} workspace={workspace} documents={documents} refresh={async () => { if (!workspace) return; const response = await api.get(`/api/workspaces/${workspace.id}/documents`); setDocuments(response.data || []); }} onClose={() => setResourcesOpen(false)} onDeleteDocument={requestDeleteDocument} onOpenMindMap={doc => { setMindMapDoc(doc); setResourcesOpen(false); }} />
+    <MindMapOverlay open={Boolean(mindMapDoc)} workspace={workspace} document={mindMapDoc} onClose={() => setMindMapDoc(null)} onQuery={handleMindMapQuery} />
     <WorkspaceModal open={Boolean(workspaceDialog)} workspace={workspaceDialog?.workspace} onClose={() => setWorkspaceDialog(null)} onSave={saveWorkspace} />
     <ConfirmDialog open={Boolean(confirmation)} title={confirmation?.kind === 'workspace' ? 'Delete workspace?' : 'Delete document?'} itemName={confirmation?.item?.title || confirmation?.item?.file_name}
       description={confirmation?.kind === 'workspace' ? 'Deleting this workspace permanently removes all associated documents, embeddings, and chat threads.' : 'This document will be permanently removed from the workspace and excluded from future answers.'}

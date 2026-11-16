@@ -83,3 +83,25 @@ class MessageOut(ORMModel):
 class ChatAnswer(BaseModel):
     user_message: MessageOut
     assistant_message: MessageOut
+
+
+class MindMapNodeSchema(BaseModel):
+    id: str
+    label: str
+    query: str
+    children: list["MindMapNodeSchema"] = Field(default_factory=list)
+
+
+class MindMapGenerateRequest(BaseModel):
+    force: bool = False
+    force_regenerate: bool = False
+    refresh: bool = False
+
+
+class MindMapOut(ORMModel):
+    id: UUID
+    document_id: UUID
+    workspace_id: UUID
+    tree_data: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime

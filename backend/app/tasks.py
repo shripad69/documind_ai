@@ -5,15 +5,14 @@ from pathlib import Path
 
 import pymupdf
 from docx import Document as DocxDocument
-from google import genai
-from google.genai import types
 from sqlalchemy import delete
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models.entities import Document, DocumentChunk
+from app.models.entities import Document, DocumentChunk, DocumentMindMap
 from app.queue import celery_app
 from app.services.citation_pipeline import chunk_pages as sentence_chunk_pages
+from app.services.embedding_service import embed_texts
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +45,7 @@ def chunk_pages(pages: list[tuple[int, str]], size: int = 800, overlap: int = 2)
     return sentence_chunk_pages(pages, size=min(size, 900), overlap_sentences=2)
 
 
-@celery_app.task(name="app.tasks.ingest_document", bind=True, max_retries=1, default_retry_delay=10)
+@celery_app.task(name="app.tasks.ingest_document", bind=True, max_retries=2, default_retry_delay=10)
 def ingest_document(self, document_id: str) -> dict:
     document_uuid = uuid.UUID(document_id)
     db = SessionLocal()
@@ -62,30 +61,30 @@ def ingest_document(self, document_id: str) -> dict:
         chunks = chunk_pages(pages)
         if not chunks:
             raise ValueError("No readable text was found in this document.")
-        if not settings.gemini_api_key:
-            raise RuntimeError("GOOGLE_API_KEY is not configured for document embedding.")
 
-        client = genai.Client(
-            api_key=settings.gemini_api_key,
-            http_options=types.HttpOptions(
-                timeout=45_000,
-                retry_options=types.HttpRetryOptions(attempts=1),
-            ),
+        texts = [content for _, content in chunks]
+        total_chunks = len(chunks)
+        batch_size = max(1, settings.embedding_batch_size)
+        replacement_chunks: list[DocumentChunk] = []
+
+        logger.info(
+            "ingestion.embedding_started document_id=%s total_chunks=%d batch_size=%d",
+            document_id,
+            total_chunks,
+            batch_size,
         )
-        replacement_chunks = []
-        for offset in range(0, len(chunks), 32):
-            batch = chunks[offset:offset + 32]
-            response = client.models.embed_content(
-                model="gemini-embedding-001",
-                contents=[content for _, content in batch],
-                config=types.EmbedContentConfig(
-                    output_dimensionality=384,
-                    task_type="RETRIEVAL_DOCUMENT",
-                ),
-            )
-            if not response.embeddings or len(response.embeddings) != len(batch):
-                raise RuntimeError("Embedding service returned an incomplete batch.")
-            for index, ((page_number, content), embedding) in enumerate(zip(batch, response.embeddings)):
+
+        for offset in range(0, total_chunks, batch_size):
+            batch_texts = texts[offset:offset + batch_size]
+            batch_embeddings = embed_texts(batch_texts)
+
+            if len(batch_embeddings) != len(batch_texts):
+                raise RuntimeError(
+                    f"Embedding service returned {len(batch_embeddings)} vectors for {len(batch_texts)} texts."
+                )
+
+            for index, embedding in enumerate(batch_embeddings):
+                page_number, content = chunks[offset + index]
                 replacement_chunks.append(DocumentChunk(
                     user_id=document.user_id,
                     workspace_id=document.workspace_id,
@@ -93,12 +92,12 @@ def ingest_document(self, document_id: str) -> dict:
                     chunk_index=offset + index,
                     page_number=page_number,
                     content=content,
-                    embedding=embedding.values,
+                    embedding=embedding,
                 ))
 
-        # Keep the old index intact until every new chunk has been extracted and
-        # embedded successfully, then replace it in one database transaction.
+        # Atomically replace old chunks and cached mind maps with newly generated ones.
         db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document.id))
+        db.execute(delete(DocumentMindMap).where(DocumentMindMap.document_id == document.id))
         db.add_all(replacement_chunks)
         document.status = "indexed"
         document.indexed_at = datetime.now(timezone.utc)
@@ -111,12 +110,12 @@ def ingest_document(self, document_id: str) -> dict:
         document = db.get(Document, document_uuid)
         if document:
             document.status = "failed"
-            # Keep details operationally useful without copying request data or credentials.
-            document.error_message = f"{type(error).__name__}: document processing failed. Check server logs."
+            document.error_message = f"{type(error).__name__}: {str(error)[:300]}"
             db.commit()
         logger.exception("ingestion.failed document_id=%s error_type=%s", document_id, type(error).__name__)
         if self.request.retries < self.max_retries and not isinstance(error, (ValueError, FileNotFoundError)):
-            raise self.retry(exc=error)
+            logger.info("ingestion.retrying document_id=%s attempt %d/%d", document_id, self.request.retries + 1, self.max_retries)
+            raise self.retry(exc=error, countdown=10)
         return {"status": "failed", "document_id": document_id}
     finally:
         db.close()
