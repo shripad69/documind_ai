@@ -25,6 +25,7 @@ export default function Sidebar({
   onLogout,
   onBrandHome,
   onCopyChatLink,
+  onDeleteChat,
 }) {
   const [filter, setFilter] = useState('');
   const filteredChats = useMemo(
@@ -235,6 +236,17 @@ export default function Sidebar({
                         aria-label={`Copy link to ${chat.title || 'New chat'}`}
                       >
                         <Icon name="Copy" size={12} />
+                      </button>
+                      <button
+                        className="chat-delete"
+                        onClick={event => {
+                          event.stopPropagation();
+                          onDeleteChat?.(chat);
+                        }}
+                        title="Delete chat"
+                        aria-label={`Delete ${chat.title || 'New chat'}`}
+                      >
+                        <Icon name="Trash2" size={12} />
                       </button>
                     </div>
                   ))

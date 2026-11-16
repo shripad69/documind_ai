@@ -1,5 +1,12 @@
 # AI Agent Guidelines - Document Chatbot Workspace Platform
 
+## Primary Context Entry Point
+
+Before analyzing the codebase, read [`summary.md`](file:///home/shripad/Desktop/miniproject/summary.md).
+It contains the complete project context, architecture, structure, data model, pipelines, API, configuration, and operating commands in one file.
+Use `summary.md` as the fast orientation layer and `REPO_CONTEXT.md` as the authoritative deep reference.
+Keep both files synchronized with every architectural change.
+
 ## Mandatory Repository Context Synchronization Rule
 
 Whenever you make any changes to this repository, you MUST keep [`REPO_CONTEXT.md`](file:///home/shripad/Desktop/miniproject/ai-document-chatbot/REPO_CONTEXT.md) strictly synchronized with your changes.
@@ -24,6 +31,8 @@ This is a mandatory requirement for all agents, contributors, and automated work
    If introducing or modifying environment variables in `config.py` or `.env.example`, update Section 12 (Configuration and Environment Variables).
 9. **Tests and Verification**:
    If introducing new test suites or evaluation scripts, update Section 13 (Local Development, Testing, and Benchmarking).
+10. **Summary Digest**:
+    If any architecture, schema, API, dependency, configuration, or frontend change is made, update `summary.md` alongside `REPO_CONTEXT.md`.
 
 ## Markdown Formatting Rules
 - When writing or editing Markdown files, always place each full sentence on its own physical line.

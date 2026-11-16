@@ -182,6 +182,7 @@ function MindMapCanvas({
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={false}
+        zoomOnDoubleClick={false}
       >
         <Background
           variant={BackgroundVariant.Dots}

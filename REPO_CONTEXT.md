@@ -129,7 +129,7 @@ ai-document-chatbot/
 │   │   ├── routers/
 │   │   │   ├── __init__.py                       # Active routers export (auth, chats, mindmap, workspaces)
 │   │   │   ├── auth.py                           # Authentication routes (/api/auth: register, login, me, logout)
-│   │   │   ├── chats.py                          # Chat session and messaging routes (/api/chats/{id}/messages)
+│   │   │   ├── chats.py                          # Chat routes (/api/chats/{id}/messages and DELETE /api/chats/{id})
 │   │   │   ├── mindmap.py                        # Document mind map routes (/api/workspaces/{id}/documents/{doc_id}/mindmap)
 │   │   │   ├── workspaces.py                     # Workspace CRUD and document ingestion routes (/api/workspaces)
 │   │   │   ├── chat.py                           # [LEGACY v1] In-memory single-user chat endpoint (not mounted in main.py)
@@ -181,7 +181,7 @@ ai-document-chatbot/
 │   │   │   │   ├── SourceCards.js                # Grid of cited passage cards and detailed citation inspector modal
 │   │   │   │   └── SourceCards.test.js           # Unit tests for SourceCards rendering and selection
 │   │   │   ├── layout/
-│   │   │   │   └── Sidebar.js                    # Workspace list, active chat list with search filter, brand home, and user session footer
+│   │   │   │   └── Sidebar.js                    # Workspace list, active chat list with search filter, copy/delete chat actions, brand home, and user session footer
 │   │   │   ├── mindmap/
 │   │   │   │   ├── MindMapNode.js                # Custom React Flow node supporting click-to-expand/collapse, toggle badge, and leaf RAG queries
 │   │   │   │   ├── MindMapNode.test.js           # Unit tests for MindMapNode click interactions, multi-level hierarchy, and query triggers
@@ -197,7 +197,7 @@ ai-document-chatbot/
 │   │   │       ├── Skeleton.js                   # Skeleton loading placeholders for sidebar lists
 │   │   │       ├── Toast.js                      # Notification toast popup for feedback and errors
 │   │   │       └── WorkspaceModal.js             # Modal for creating or renaming workspaces
-│   │   ├── App.css                               # Architectural stylesheet with cold slate variables, layout, and component rules
+│   │   ├── App.css                               # Architectural component, layout, and interaction styles
 │   │   ├── App.js                                # Top-level frontend controller, routing, session bootstrap, and workspace state
 │   │   ├── api.js                                # Axios client instance configured with credentials and error parsing
 │   │   ├── index.css                             # Global CSS reset, font imports, and typography utilities
@@ -651,6 +651,7 @@ The platform includes an interactive mind map generation pipeline defined in [`m
 | `POST` | `/api/workspaces/{id}/chats` | User | `ChatCreate` (title) | 201 | Create a new chat session |
 | `GET` | `/api/chats/{id}/messages` | User | None | 200 | List all messages in chat session |
 | `POST` | `/api/chats/{id}/messages` | User | `MessageCreate` (content) | 201 | Post user query, run RAG, return answer + sources |
+| `DELETE` | `/api/chats/{id}` | User | None | 204 | Delete chat session and cascade its messages |
 | `GET` | `/api/health` | Public | None | 200 | Healthcheck endpoint returning `{"status": "healthy"}` |
 | `GET` | `/` | Public | None | 200 | Root endpoint with API title and link to OpenAPI docs |
 
@@ -673,10 +674,13 @@ Detailed visual guidelines are documented in [`FRONTEND_CONTEXT.txt`](file:///ho
 - URL Synchronization: Active workspace and chat IDs are stored in URL query parameters (`?workspace=<id>&chat=<id>`) and persisted in `localStorage`.
 - Document Polling: When any document has `status === 'processing'`, a periodic timer in `App.js` polls `GET /api/workspaces/{id}/documents` every 5 seconds until processing finishes.
 - Concurrent Request Guards: `workspaceRequest` and `messageRequest` refs increment monotonically to prevent race conditions when switching workspaces or chats quickly.
+- Chat Deletion: `ConfirmDialog` confirms sidebar chat removal, `DELETE /api/chats/{id}` deletes the session and messages, and deleting the active chat clears `chat`/`messages` and removes `?chat=<id>` from the URL.
 
 ### Mind Map Canvas Interaction Flow
 - **Interaction Architecture**: Mind map exploration is rendered using `@xyflow/react` and custom node component [`MindMapNode.js`](file:///home/shripad/Desktop/miniproject/ai-document-chatbot/frontend/src/components/mindmap/MindMapNode.js).
 - **Expand / Collapse Navigation**: When users click on any expandable node (possessing children), `onToggleCollapse(nodeId)` updates the `collapsedIds` Set state in `MindMapCanvas`.
+- **Node Pointer Events**: `useMindMapLayout` sets `pointerEvents: 'all'` on every node because React Flow otherwise applies `pointer-events: none` to non-draggable, non-selectable nodes without node event handlers.
+- **Double-Click Zoom Disabled**: `MindMapCanvas` sets `zoomOnDoubleClick={false}` so activating a node or its toggle badge never zooms the canvas.
 - **Hierarchy Recalculation**: `useMindMapLayout.js` regenerates visible nodes and Bezier edges using Dagre Left-to-Right layout, hiding collapsed subtrees and dynamically computing positions.
 - **Smooth Viewport Re-centering**: A 450ms smooth `fitView` animation smoothly centers the updated hierarchy after node expansion or collapse.
 - **RAG Chat Exploration on Leaves**: Leaf nodes (possessing no child sub-topics) execute `onQuery(query, label)` when clicked, opening a chat thread and populating the question composer with targeted context inquiries.
@@ -813,7 +817,11 @@ python -m app.reindex_documents --document-id <document-uuid>
    The citation renumbering logic ensures that source cards in the UI strictly match sequential brackets in the text.
 8. **Frontend Styling Paradigm**:
    Do not install third-party component libraries or icon packages.
-   Maintain the existing design tokens in `App.css` and use the SVG components defined in `Icons.js`.
+   Maintain the existing design tokens in `index.css` and the component rules in `App.css`, and use the SVG components defined in `Icons.js`.
 9. **Mind Map Structure Integrity**:
    The mind map parser expects a recursive JSON tree containing `id`, `label`, `query`, and `children`.
    Always validate tree nodes against `MindMapNodeSchema` before returning or caching them.
+10. **Single-File Summary Digest**:
+   A workspace-level agent orientation file lives at [`summary.md`](file:///home/shripad/Desktop/miniproject/summary.md).
+   It summarizes the current architecture, structure, data model, pipelines, API, configuration, and operations in one file.
+   Keep it synchronized with this document whenever architectural, schema, API, dependency, configuration, or frontend changes are introduced.

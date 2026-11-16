@@ -664,7 +664,8 @@
   white-space: nowrap;
 }
 
-.chat-copy-link {
+.chat-copy-link,
+.chat-delete {
   display: grid;
   place-items: center;
   width: 24px;
@@ -676,17 +677,36 @@
   color: var(--text-tertiary);
   opacity: 0;
   transition: opacity var(--duration-fast) var(--ease-out),
-              color var(--duration-fast) var(--ease-out);
+              color var(--duration-fast) var(--ease-out),
+              background var(--duration-fast) var(--ease-out);
+}
+
+.chat-copy-link {
+  margin-right: 2px;
 }
 
 .chat-row:hover .chat-copy-link,
-.chat-row:focus-within .chat-copy-link {
+.chat-row:hover .chat-delete,
+.chat-row:focus-within .chat-copy-link,
+.chat-row:focus-within .chat-delete {
   opacity: 1;
 }
 
 .chat-copy-link:hover {
   color: var(--accent-secondary);
   background: var(--accent-subtle-bg);
+}
+
+.chat-delete:hover {
+  color: var(--status-danger);
+  background: var(--status-danger-bg);
+}
+
+@media (hover: none) {
+  .chat-copy-link,
+  .chat-delete {
+    opacity: 1;
+  }
 }
 
 .new-chat-button {

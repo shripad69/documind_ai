@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,14 @@ def owned_chat(db: Session, user_id: uuid.UUID, chat_id: uuid.UUID) -> ChatSessi
     if chat is None:
         raise HTTPException(status_code=404, detail="Chat session not found.")
     return chat
+
+
+@router.delete("/{chat_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_chat(chat_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    chat = owned_chat(db, user.id, chat_id)
+    db.delete(chat)
+    db.commit()
+    logger.info("chat.deleted chat_id=%s user_id=%s", chat_id, user.id)
 
 
 @router.get("/{chat_id}/messages", response_model=list[MessageOut])

@@ -86,7 +86,7 @@ function MindMapCanvasHarness({ onQuerySpy }) {
   return (
     <ReactFlowProvider>
       <div style={{ width: 800, height: 600 }}>
-        <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} />
+        <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} zoomOnDoubleClick={false} />
       </div>
     </ReactFlowProvider>
   );
@@ -127,6 +127,7 @@ describe('MindMapNode expand and collapse interactions', () => {
       el => el.textContent.includes('Core Services')
     );
     expect(coreServicesNode).toBeTruthy();
+    expect(coreServicesNode.closest('.react-flow__node').style.pointerEvents).toBe('all');
 
     act(() => {
       coreServicesNode.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));

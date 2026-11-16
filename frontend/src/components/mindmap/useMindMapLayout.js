@@ -146,6 +146,9 @@ export function useMindMapLayout(treeData, collapsedIds, onToggleCollapse, onQue
           x: Math.round(pos.x - width / 2),
           y: Math.round(pos.y - height / 2),
         },
+        // React Flow sets pointer-events: none on non-draggable, non-selectable
+        // nodes without node handlers. The custom node owns its click behavior.
+        style: { pointerEvents: 'all' },
         data: {
           label: node.label,
           query: node.query,

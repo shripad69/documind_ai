@@ -191,6 +191,9 @@ export default function App() {
   function requestDeleteDocument(doc) {
     setConfirmation({ kind: 'document', item: doc });
   }
+  function requestDeleteChat(selected) {
+    setConfirmation({ kind: 'chat', item: selected });
+  }
   async function confirmDelete() {
     const current = confirmation;
     if (!current) return;
@@ -207,11 +210,20 @@ export default function App() {
           if (next[0]) { const selectedChat = await loadWorkspaceData(next[0], null, requestId); if (requestId === workspaceRequest.current) await loadMessages(selectedChat); }
         }
         setToast({ type: 'success', message: 'Workspace deleted.' });
-      } else {
+      } else if (current.kind === 'document') {
         await api.delete(`/api/workspaces/${workspace.id}/documents/${current.item.id}`);
         setConfirmation(null);
         const response = await api.get(`/api/workspaces/${workspace.id}/documents`); setDocuments(response.data || []);
         setToast({ type: 'success', message: 'Document deleted.' });
+      } else {
+        await api.delete(`/api/chats/${current.item.id}`);
+        setChats(currentChats => currentChats.filter(item => item.id !== current.item.id));
+        setConfirmation(null);
+        if (chat?.id === current.item.id) {
+          ++messageRequest.current;
+          setChat(null); setMessages([]);
+        }
+        setToast({ type: 'success', message: 'Chat deleted.' });
       }
     } catch (err) { setConfirmation(null); setToast({ type: 'error', message: getErrorMessage(err) }); }
   }
@@ -268,7 +280,7 @@ export default function App() {
     <Sidebar user={user} workspaces={workspaces} activeWorkspace={workspace} chats={chats} activeChat={chat} documents={documents} loadingWorkspaces={loadingWorkspaces} loadingChats={loadingChats}
       collapsed={sidebarCollapsed} mobileOpen={mobileSidebarOpen} onToggleCollapse={() => setSidebarCollapsed(true)} onMobileClose={() => setMobileSidebarOpen(false)}
       onWorkspace={selectWorkspace} onCreateWorkspace={() => setWorkspaceDialog({ mode: 'create' })} onRenameWorkspace={selected => setWorkspaceDialog({ mode: 'rename', workspace: selected })} onDeleteWorkspace={requestDeleteWorkspace}
-      onResources={() => setResourcesOpen(true)} onCreateChat={createChat} onChat={selectChat} onLogout={logout} onBrandHome={goToLatestChat} onCopyChatLink={copyChatLink} />
+      onResources={() => setResourcesOpen(true)} onCreateChat={createChat} onChat={selectChat} onLogout={logout} onBrandHome={goToLatestChat} onCopyChatLink={copyChatLink} onDeleteChat={requestDeleteChat} />
     {sidebarCollapsed && <button className="sidebar-reopen" onClick={() => setSidebarCollapsed(false)} aria-label="Open sidebar" title="Open sidebar"><Icon name="PanelLeftOpen" /></button>}
     <div className={`main-column ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       {workspace ? <ChatView workspace={workspace} chat={chat} messages={messages} setMessages={setMessages} documents={documents} user={user} onResources={() => setResourcesOpen(true)} onToggleResources={() => setResourcesOpen(value => !value)} onCreateChat={createChat} focusComposerRequest={composerFocusRequest} pendingQuery={pendingMindMapQuery} onClearPendingQuery={() => setPendingMindMapQuery(null)}
@@ -279,8 +291,8 @@ export default function App() {
     <ResourcesPanel open={resourcesOpen} workspace={workspace} documents={documents} refresh={async () => { if (!workspace) return; const response = await api.get(`/api/workspaces/${workspace.id}/documents`); setDocuments(response.data || []); }} onClose={() => setResourcesOpen(false)} onDeleteDocument={requestDeleteDocument} onOpenMindMap={doc => { setMindMapDoc(doc); setResourcesOpen(false); }} />
     <MindMapOverlay open={Boolean(mindMapDoc)} workspace={workspace} document={mindMapDoc} onClose={() => setMindMapDoc(null)} onQuery={handleMindMapQuery} />
     <WorkspaceModal open={Boolean(workspaceDialog)} workspace={workspaceDialog?.workspace} onClose={() => setWorkspaceDialog(null)} onSave={saveWorkspace} />
-    <ConfirmDialog open={Boolean(confirmation)} title={confirmation?.kind === 'workspace' ? 'Delete workspace?' : 'Delete document?'} itemName={confirmation?.item?.title || confirmation?.item?.file_name}
-      description={confirmation?.kind === 'workspace' ? 'Deleting this workspace permanently removes all associated documents, embeddings, and chat threads.' : 'This document will be permanently removed from the workspace and excluded from future answers.'}
+    <ConfirmDialog open={Boolean(confirmation)} title={confirmation?.kind === 'workspace' ? 'Delete workspace?' : confirmation?.kind === 'document' ? 'Delete document?' : 'Delete chat?'} itemName={confirmation?.item?.title || confirmation?.item?.file_name}
+      description={confirmation?.kind === 'workspace' ? 'Deleting this workspace permanently removes all associated documents, embeddings, and chat threads.' : confirmation?.kind === 'document' ? 'This document will be permanently removed from the workspace and excluded from future answers.' : 'This conversation and all of its messages will be permanently deleted.'}
       onCancel={() => setConfirmation(null)} onConfirm={confirmDelete} />
     <Toast toast={toast} onDismiss={() => setToast(null)} />
   </div>;
