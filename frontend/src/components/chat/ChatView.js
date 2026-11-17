@@ -52,6 +52,7 @@ export default function ChatView({
   user,
   onResources,
   onToggleResources,
+  onStudy,
   onChatUpdated,
   onCreateChat,
   onToggleSidebar,
@@ -180,6 +181,20 @@ export default function ChatView({
           >
             <i />
             {indexingCount ? `${indexingCount} Indexing…` : `${readyCount} Ready`}
+          </button>
+          <button
+            className="header-resource-button header-study-button"
+            onClick={onStudy}
+            disabled={readyCount === 0}
+            title={
+              readyCount
+                ? 'Open Study Mode flashcards and quizzes'
+                : 'Index at least one document to use Study Mode'
+            }
+            aria-label="Open Study Mode"
+          >
+            <Icon name="Study" size={16} />
+            <span>Study</span>
           </button>
           <button
             className="header-resource-button"

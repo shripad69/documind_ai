@@ -8,8 +8,18 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_user
 from app.config import settings
 from app.db import get_db
-from app.models.entities import ChatSession, Document, User, Workspace
-from app.models.schemas import ChatCreate, ChatOut, DocumentOut, WorkspaceCreate, WorkspaceOut, WorkspaceUpdate
+from app.models.entities import ChatSession, Document, DocumentChunk, User, Workspace
+from app.models.schemas import (
+    ChatCreate,
+    ChatOut,
+    DocumentOut,
+    StudyGenerateRequest,
+    StudySetOut,
+    WorkspaceCreate,
+    WorkspaceOut,
+    WorkspaceUpdate,
+)
+from app.services.study_generator import StudyGenerationError, StudyGenerator
 from app.tasks import ingest_document
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
@@ -164,3 +174,106 @@ def create_chat(workspace_id: uuid.UUID, payload: ChatCreate, db: Session = Depe
     db.commit()
     db.refresh(chat)
     return chat
+
+
+@router.post("/{workspace_id}/study", response_model=StudySetOut)
+def generate_study_set(
+    workspace_id: uuid.UUID,
+    payload: StudyGenerateRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Generate a stateless flashcard or quiz set from indexed workspace documents."""
+    owned_workspace(db, user.id, workspace_id)
+
+    workspace_documents = list(db.scalars(
+        select(Document)
+        .where(Document.workspace_id == workspace_id, Document.user_id == user.id)
+        .order_by(Document.created_at.asc())
+    ))
+
+    if payload.document_ids:
+        requested_ids = {str(document_id) for document_id in payload.document_ids}
+        documents_by_id = {str(document.id): document for document in workspace_documents}
+        if requested_ids - set(documents_by_id):
+            raise HTTPException(
+                status_code=404,
+                detail="One or more selected documents do not belong to this workspace.",
+            )
+        targets = [
+            document
+            for document in workspace_documents
+            if str(document.id) in requested_ids
+        ]
+    else:
+        targets = workspace_documents
+
+    if not targets:
+        raise HTTPException(
+            status_code=400,
+            detail="Upload and index at least one document before generating a study set.",
+        )
+
+    indexed_documents = [document for document in targets if document.status == "indexed"]
+    if not indexed_documents:
+        if any(document.status == "processing" for document in targets):
+            raise HTTPException(
+                status_code=409,
+                detail="The selected documents are still being indexed. Please wait until indexing finishes.",
+            )
+        raise HTTPException(
+            status_code=400,
+            detail="No indexed documents are available for study generation. Index a document first.",
+        )
+
+    rows = db.execute(
+        select(DocumentChunk, Document.file_name)
+        .join(Document, Document.id == DocumentChunk.document_id)
+        .where(
+            DocumentChunk.user_id == user.id,
+            DocumentChunk.workspace_id == workspace_id,
+            DocumentChunk.document_id.in_([document.id for document in indexed_documents]),
+            Document.user_id == user.id,
+            Document.workspace_id == workspace_id,
+            Document.status == "indexed",
+        )
+        .order_by(DocumentChunk.document_id.asc(), DocumentChunk.chunk_index.asc())
+    ).all()
+
+    grouped: dict[str, dict] = {}
+    for chunk, file_name in rows:
+        key = str(chunk.document_id)
+        group = grouped.setdefault(
+            key,
+            {"document_id": key, "document_name": file_name, "chunks": []},
+        )
+        group["chunks"].append({
+            "chunk_id": str(chunk.id),
+            "chunk_index": chunk.chunk_index,
+            "page_number": chunk.page_number,
+            "content": chunk.content,
+        })
+
+    documents_payload = [
+        grouped[str(document.id)]
+        for document in indexed_documents
+        if str(document.id) in grouped
+    ]
+    if not documents_payload:
+        raise HTTPException(
+            status_code=400,
+            detail="The selected documents contain no indexed text to study.",
+        )
+
+    try:
+        return StudyGenerator().generate(
+            documents_payload,
+            mode=payload.mode,
+            difficulty=payload.difficulty,
+            count=payload.count,
+            correlation_id=f"study-{workspace_id}",
+        )
+    except StudyGenerationError as error:
+        raise HTTPException(status_code=error.status_code, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=502, detail="Failed to generate a study set.") from error

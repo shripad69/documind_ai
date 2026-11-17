@@ -6,7 +6,7 @@ Document Chatbot is a production-oriented, multi-tenant Retrieval-Augmented Gene
 It allows authenticated users to create isolated workspaces, upload documents (PDF and DOCX), and converse with their document contents through verifiable citations.
 The repository represents a transition from an initial single-user prototype to a multi-tenant workspace architecture.
 The v1 architecture used local ChromaDB vector storage, in-memory conversation dictionaries, and unauthenticated endpoints.
-The v2 architecture runs on PostgreSQL 16 with pgvector and full-text search, Celery background workers backed by Redis, Argon2id authentication with revocable session tokens, local `BAAI/bge-m3` 1024-dimensional dense vector embeddings, OpenRouter chat completions with model fallbacks, interactive hierarchical mind map visualization, and deterministic sentence-aligned citation verification.
+The v2 architecture runs on PostgreSQL 16 with pgvector and full-text search, Celery background workers backed by Redis, Argon2id authentication with revocable session tokens, local `BAAI/bge-m3` 1024-dimensional dense vector embeddings, OpenRouter chat completions with model fallbacks, interactive hierarchical mind map visualization, stateless citation-backed study set generation, and deterministic sentence-aligned citation verification.
 
 ### Key Architectural Capabilities
 
@@ -22,7 +22,7 @@ The retrieval mode is configurable dynamically via `RETRIEVAL_MODE` (`hybrid_rrf
 
 3. **Interactive Hierarchical Mind Maps**:
 Users can generate NotebookLM-style interactive mind maps for any indexed document.
-The backend extracts structured JSON trees using Google Gemini or OpenRouter, and the frontend renders an interactive graph canvas using `@xyflow/react` and `@dagrejs/dagre`.
+The backend extracts structured JSON trees using OpenRouter, and the frontend renders an interactive graph canvas using `@xyflow/react` and `@dagrejs/dagre`.
 Clicking any mind map node instantly triggers grounded RAG exploration in the workspace chat.
 
 4. **Deterministic Citation Verification**:
@@ -35,7 +35,13 @@ Document parsing and chunking are offloaded to Celery workers on Redis.
 The worker utilizes local batch embedding (`embed_texts`) with atomic transactions that swap old chunks for new chunks and mind maps in a single database commit.
 The PostgreSQL column `tsv_content` is defined with `server_default=sa.FetchedValue()`, omitting it from ORM insert parameter lists and allowing the PostgreSQL trigger `trg_document_chunks_tsv_update` to compute `tsvector` automatically without datatype mismatch errors.
 
-6. **Architectural Design System**:
+6. **Stateless Study Mode**:
+Users can generate citation-backed flashcards or multiple-choice quizzes from selected indexed workspace documents.
+The backend samples about 20,000 characters across documents, asks OpenRouter for a JSON study set with reasoning disabled, repairs and validates the JSON, and resolves every citation against the sampled chunks.
+Study generation persists nothing, requires no migration, and returns `StudySetOut` directly to the frontend overlay.
+Items that cannot resolve at least one citation are dropped, so generated sets remain grounded.
+
+7. **Architectural Design System**:
 The UI features a disciplined cold graphite palette (`#0B0E14`), Steel Cerulean accent (`#38BDF8`), archival amber evidence highlighters, and Geist / Geist Mono typography.
 
 ### System Architecture Diagram
@@ -45,6 +51,7 @@ flowchart TD
     subgraph Client ["Client Tier (Browser)"]
         UI["React 18 SPA (Nginx :8080)"]
         MINDMAP_UI["MindMap Canvas (@xyflow/react + Dagre)"]
+        STUDY_UI["Study Overlay (3D Flashcards + Quiz)"]
     end
 
     subgraph API ["Application Tier (FastAPI :8000)"]
@@ -52,6 +59,7 @@ flowchart TD
         WS["Workspaces Router (/api/workspaces)"]
         CHATS["Chats Router (/api/chats)"]
         MINDMAP_API["Mindmap Router (/api/workspaces/.../mindmap)"]
+        STUDY_API["Study Generator (/api/workspaces/{id}/study)"]
         RAG["WorkspaceRAG Engine"]
         HYBRID["HybridSearcher (BM25 + Dense Vector + RRF)"]
         CITATION["Deterministic Citation Pipeline"]
@@ -75,7 +83,6 @@ flowchart TD
     end
 
     subgraph External_AI ["External LLM APIs"]
-        GEMINI_MM["Google Gemini API (gemini-3.8-flash for MindMap, Optional)"]
         OPENROUTER["OpenRouter API (gemma-4-31b-it:free + fallbacks)"]
     end
 
@@ -91,9 +98,12 @@ flowchart TD
     BGE_MODEL -.->|"Weights Cache"| MODEL_CACHE
     CELERY -->|"Atomic insert (chunks + vectors)"| PG
     MINDMAP_API -->|"Extract Chunks"| PG
-    MINDMAP_API -->|"Generate Tree"| GEMINI_MM
-    MINDMAP_API -.->|"Fallback Tree Generation"| OPENROUTER
+    MINDMAP_API -->|"Generate Tree"| OPENROUTER
     MINDMAP_API -->|"Cache Tree Data"| PG
+    STUDY_UI -->|"POST selected documents and options"| STUDY_API
+    STUDY_API -->|"Load indexed chunks"| PG
+    STUDY_API -->|"Generate JSON study set"| OPENROUTER
+    STUDY_API --> CITATION
     CHATS -->|"Load history & message"| PG
     CHATS --> RAG
     RAG -->|"Embed question (1024-d)"| BGE_SVC
@@ -125,13 +135,13 @@ ai-document-chatbot/
 │   │   ├── models/
 │   │   │   ├── __init__.py                       # Models package export
 │   │   │   ├── entities.py                       # SQLAlchemy ORM models (User, LoginSession, Workspace, Document, DocumentChunk, DocumentMindMap, ChatSession, ChatMessage)
-│   │   │   └── schemas.py                        # Pydantic v2 validation and response models (including MindMapNodeSchema, MindMapOut)
+│   │   │   └── schemas.py                        # Pydantic v2 validation and response models (including MindMapNodeSchema, MindMapOut, StudyGenerateRequest, and StudySetOut)
 │   │   ├── routers/
 │   │   │   ├── __init__.py                       # Active routers export (auth, chats, mindmap, workspaces)
 │   │   │   ├── auth.py                           # Authentication routes (/api/auth: register, login, me, logout)
 │   │   │   ├── chats.py                          # Chat routes (/api/chats/{id}/messages and DELETE /api/chats/{id})
 │   │   │   ├── mindmap.py                        # Document mind map routes (/api/workspaces/{id}/documents/{doc_id}/mindmap)
-│   │   │   ├── workspaces.py                     # Workspace CRUD and document ingestion routes (/api/workspaces)
+│   │   │   ├── workspaces.py                     # Workspace CRUD, document ingestion, and stateless study generation routes (/api/workspaces)
 │   │   │   ├── chat.py                           # [LEGACY v1] In-memory single-user chat endpoint (not mounted in main.py)
 │   │   │   └── documents.py                      # [LEGACY v1] Direct synchronous upload endpoint (not mounted in main.py)
 │   │   ├── services/
@@ -141,6 +151,7 @@ ai-document-chatbot/
 │   │   │   ├── hybrid_search.py                  # BM25Searcher, DenseVectorSearcher, reciprocal_rank_fusion, and HybridSearcher
 │   │   │   ├── mindmap_generator.py              # Hierarchical mind map tree generation using Gemini API with OpenRouter fallback
 │   │   │   ├── openrouter.py                     # OpenRouter API client with retries, empty-response detection, and model fallbacks
+│   │   │   ├── study_generator.py                # Stateless sampling, JSON study set generation, validation, and citation resolution
 │   │   │   ├── workspace_rag.py                  # Core RAG orchestration: query embedding, hybrid retrieval, prompt assembly, and citation linking
 │   │   │   ├── document_processor.py             # [LEGACY v1] ChromaDB-based ingestion processor
 │   │   │   └── rag_service.py                    # [LEGACY v1] ChromaDB-based query service
@@ -160,7 +171,8 @@ ai-document-chatbot/
 │   │   ├── test_embedding_service.py             # Unit tests for bge-m3 embedding service, dimensions, and tsv_content omission
 │   │   ├── test_hybrid_search.py                 # Unit tests for BM25 search, dense vector search, and RRF fusion
 │   │   ├── test_mindmap.py                       # Unit tests for mind map generator parsing, structure, and fallbacks
-│   │   └── test_openrouter_generation.py         # Unit tests for OpenRouter error handling, retries, and fallbacks
+│   │   ├── test_openrouter_generation.py         # Unit tests for OpenRouter error handling, retries, and fallbacks
+│   │   └── test_study_generator.py               # Unit tests for study sampling, request validation, JSON repair, item validation, and citations
 │   ├── .env.example                              # Template for backend secrets and configuration
 │   ├── Dockerfile                                # Multi-stage backend container definition with CPU PyTorch
 │   ├── requirements.txt                          # Production Python dependencies (including sentence-transformers & torch)
@@ -190,6 +202,9 @@ ai-document-chatbot/
 │   │   │   │   └── useMindMapLayout.test.js      # Unit tests for mind map layout calculation
 │   │   │   ├── resources/
 │   │   │   │   └── ResourcesPanel.js             # Slide-over drawer for drag-and-drop document upload and mind map launch
+│   │   │   ├── study/
+│   │   │   │   ├── StudyOverlay.js               # Stateless flashcards and quiz overlay with configuration, loading, citations, and review
+│   │   │   │   └── StudyOverlay.test.js          # Unit tests for mode switching, document defaults, flashcard flip, quiz feedback, and close
 │   │   │   └── ui/
 │   │   │       ├── ConfirmDialog.js              # Generic destructive confirmation modal (delete workspace/document)
 │   │   │       ├── Icons.js                      # Custom SVG icons, brand logos, avatar badges, and file type logos
@@ -199,7 +214,7 @@ ai-document-chatbot/
 │   │   │       └── WorkspaceModal.js             # Modal for creating or renaming workspaces
 │   │   ├── App.css                               # Architectural component, layout, and interaction styles
 │   │   ├── App.js                                # Top-level frontend controller, routing, session bootstrap, and workspace state
-│   │   ├── api.js                                # Axios client instance configured with credentials and error parsing
+│   │   ├── api.js                                # Axios client instance configured with credentials, error parsing, and study generation
 │   │   ├── index.css                             # Global CSS reset, font imports, and typography utilities
 │   │   └── index.js                              # React DOM mounting entrypoint
 │   ├── Dockerfile                                # Frontend container with multi-stage build and Nginx
@@ -652,8 +667,32 @@ The platform includes an interactive mind map generation pipeline defined in [`m
 | `GET` | `/api/chats/{id}/messages` | User | None | 200 | List all messages in chat session |
 | `POST` | `/api/chats/{id}/messages` | User | `MessageCreate` (content) | 201 | Post user query, run RAG, return answer + sources |
 | `DELETE` | `/api/chats/{id}` | User | None | 204 | Delete chat session and cascade its messages |
+| `POST` | `/api/workspaces/{id}/study` | User | `StudyGenerateRequest` (mode, optional document_ids, count, difficulty) | 200 | Generate a stateless citation-backed flashcard or quiz set from indexed documents |
 | `GET` | `/api/health` | Public | None | 200 | Healthcheck endpoint returning `{"status": "healthy"}` |
 | `GET` | `/` | Public | None | 200 | Root endpoint with API title and link to OpenAPI docs |
+
+### Study Generation Pipeline
+
+The study endpoint is implemented in [`workspaces.py`](file:///home/shripad/Desktop/miniproject/ai-document-chatbot/backend/app/routers/workspaces.py) and [`study_generator.py`](file:///home/shripad/Desktop/miniproject/ai-document-chatbot/backend/app/services/study_generator.py).
+
+1. `owned_workspace` verifies the workspace belongs to the current user.
+2. Optional `document_ids` are resolved against the workspace, and any foreign ID returns 404.
+3. Target documents are examined before generation.
+4. If every target is processing, the endpoint returns 409 because none is indexed yet.
+5. If no target document can provide indexed chunks, the endpoint returns 400.
+6. `DocumentChunk` is joined to `Document` and filtered by `user_id`, `workspace_id`, selected document IDs, and `Document.status == "indexed"`.
+7. Chunks are grouped by document with `document_id`, `document_name`, `chunk_id`, `chunk_index`, `page_number`, and `content`.
+8. `StudyGenerator.build_citation_registry` assigns each document a share of `MAX_CONTEXT_CHARS = 20_000`.
+9. Sampling guarantees first, middle, and last chunks when the per-document budget allows, then fills with evenly spaced chunks and omission markers.
+10. The prompt asks for exactly `count` items in JSON with `flashcards` or `questions`, four options per quiz question, `correct_index` from 0 to 3, concise explanations, and `[chunk_N]` citation tags.
+11. `OpenRouterAnswerGenerator` is reused with `response_format={"type": "json_object"}` and `reasoning_effort="none"`.
+12. JSON cleanup strips think blocks and fences, parses directly, retries the outermost balanced object, and repairs truncated JSON by closing strings and brackets.
+13. Flashcards require `front` and `back`; quiz questions require `question`, four non-empty options, integer `correct_index` in 0 to 3, and `explanation`.
+14. Each accepted item is passed through `resolve_citations` with the turn-local chunk map.
+15. Citations are renumbered per item to `chunk_1`, `chunk_2`, and onward and returned as `source_references`.
+16. Items without at least one resolved citation are dropped.
+17. The response is trimmed to the requested count and returned as `StudySetOut`.
+18. No study records are persisted and no database schema change is required.
 
 ---
 
@@ -669,12 +708,26 @@ Detailed visual guidelines are documented in [`FRONTEND_CONTEXT.txt`](file:///ho
 - **Concentric Radii**: Card surfaces `16px`, interior elements `8px`, small badges `4px` - `6px`.
 
 ### State Management (`App.js`)
-- Root state manages `user`, `workspaces`, `workspace`, `chats`, `chat`, `messages`, and `documents`.
+- Root state manages `user`, `workspaces`, `workspace`, `chats`, `chat`, `messages`, `documents`, and `studyOpen`.
 - Custom navigation hook `usePath()` handles browser history and popstate events without React Router.
 - URL Synchronization: Active workspace and chat IDs are stored in URL query parameters (`?workspace=<id>&chat=<id>`) and persisted in `localStorage`.
 - Document Polling: When any document has `status === 'processing'`, a periodic timer in `App.js` polls `GET /api/workspaces/{id}/documents` every 5 seconds until processing finishes.
 - Concurrent Request Guards: `workspaceRequest` and `messageRequest` refs increment monotonically to prevent race conditions when switching workspaces or chats quickly.
 - Chat Deletion: `ConfirmDialog` confirms sidebar chat removal, `DELETE /api/chats/{id}` deletes the session and messages, and deleting the active chat clears `chat`/`messages` and removes `?chat=<id>` from the URL.
+- Study Mode: `App.js` owns `studyOpen`, `ChatView` shows an enabled Study header button when at least one document is indexed, and `StudyOverlay` is rendered at the root with the active workspace and documents.
+
+### Study Overlay Interaction Flow
+- **Component**: [`StudyOverlay.js`](file:///home/shripad/Desktop/miniproject/ai-document-chatbot/frontend/src/components/study/StudyOverlay.js) is a fixed modal with a focus trap, Escape close, and focus restoration to the previously active element.
+- **Configuration Rail**: Mode switch for Flashcards and Quiz, indexed document pills defaulting to all, count chips 5, 8, and 12, and difficulty chips Easy, Medium, and Hard.
+- **State Reset**: Changing mode, documents, count, or difficulty clears any generated set and resets progress so stale labels cannot leak across configurations.
+- **Generation**: Generate and Regenerate call `generateStudySet(workspaceId, { mode, documentIds, count, difficulty })` with staged loading copy and inline error recovery.
+- **3D Flashcards**: The card stage uses `perspective: 1000px`; the card uses `transform-style: preserve-3d` and a 560 ms transition; faces use `backface-visibility: hidden`; the back uses `rotateY(180deg)`.
+- **Card Interaction**: Click or Space flips the card, the back renders Markdown, and the per-card `SourceCards` are rendered outside the transformed container so the source inspector modal is not clipped.
+- **Card Navigation**: Previous and Next buttons and a counter move between cards, while Got it and Review again record local self-check state.
+- **Quiz Flow**: One question renders at a time with four lettered options; selecting an answer immediately marks the correct option green `#10B981` and any wrong selection red.
+- **Quiz Feedback**: A live score chip and progress bar update, the explanation renders Markdown with `SourceCards`, and Next advances to the summary.
+- **Quiz Summary**: The final score view offers Review Missed, which restarts only missed questions, and Try Again, which restarts the full set.
+- **Styling**: Study rules live at the end of `App.css`, use existing tokens, inline SVG icons, `MarkdownRenderer`, and `SourceCards`, and add no third-party UI libraries.
 
 ### Mind Map Canvas Interaction Flow
 - **Interaction Architecture**: Mind map exploration is rendered using `@xyflow/react` and custom node component [`MindMapNode.js`](file:///home/shripad/Desktop/miniproject/ai-document-chatbot/frontend/src/components/mindmap/MindMapNode.js).
@@ -701,6 +754,7 @@ Detailed visual guidelines are documented in [`FRONTEND_CONTEXT.txt`](file:///ho
 | **Chunking** | [`citation_pipeline.py`](file:///home/shripad/Desktop/miniproject/ai-document-chatbot/backend/app/services/citation_pipeline.py) | `document_processor.py` | Sentence-aligned chunking with overlap in citation pipeline |
 | **Generation** | [`openrouter.py`](file:///home/shripad/Desktop/miniproject/ai-document-chatbot/backend/app/services/openrouter.py) (OpenRouter OpenAI API) | Direct Gemini chat completions | Answer generator supports candidate model progression, native server-side models array fallback, and reasoning exhaustion prevention |
 | **Mind Map** | [`mindmap.py`](file:///home/shripad/Desktop/miniproject/ai-document-chatbot/backend/app/routers/mindmap.py) + [`mindmap_generator.py`](file:///home/shripad/Desktop/miniproject/ai-document-chatbot/backend/app/services/mindmap_generator.py) | None | Hierarchical structured tree generation with caching |
+| **Study Mode** | [`workspaces.py`](file:///home/shripad/Desktop/miniproject/ai-document-chatbot/backend/app/routers/workspaces.py) + [`study_generator.py`](file:///home/shripad/Desktop/miniproject/ai-document-chatbot/backend/app/services/study_generator.py) + [`StudyOverlay.js`](file:///home/shripad/Desktop/miniproject/ai-document-chatbot/frontend/src/components/study/StudyOverlay.js) | None | Stateless JSON study generation with citation resolution and no persisted records |
 
 ---
 
@@ -762,15 +816,15 @@ This runs `docker compose up --build -d --force-recreate` and follows consolidat
    ```bash
    PYTHONPATH=backend pytest backend/tests
    ```
-   Tests cover text normalization, sentence splitting, citation tag resolution, quantity validation, OpenRouter candidate progression, reasoning token exhaustion prevention, provider error fallbacks, BM25 lexical search, dense vector retrieval, Reciprocal Rank Fusion, mind map tree structure, reasoning block sanitization, direct OpenRouter mind map generation, bge-m3 embedding service, sibling deduplication, and datatype insertion verification.
-   All 68 unit tests currently pass.
+   Tests cover text normalization, sentence splitting, citation tag resolution, quantity validation, OpenRouter candidate progression, reasoning token exhaustion prevention, provider error fallbacks, BM25 lexical search, dense vector retrieval, Reciprocal Rank Fusion, mind map tree structure, reasoning block sanitization, direct OpenRouter mind map generation, bge-m3 embedding service, sibling deduplication, datatype insertion verification, study sampling, study request validation, JSON repair, count trimming, `correct_index` rejection, citation resolution, and study endpoint error handling.
+   All 77 unit tests currently pass.
 2. **Frontend Tests**:
    Execute Jest tests via react-scripts:
    ```bash
    npm --prefix frontend test -- --watchAll=false
    ```
-   Tests cover Markdown rendering, citation pill parsing, source card inspection, Dagre mind map layout calculations, sibling node deduplication, and interactive node expand/collapse behavior.
-   All 4 test suites (10 unit tests) currently pass.
+   Tests cover Markdown rendering, citation pill parsing, source card inspection, Dagre mind map layout calculations, sibling node deduplication, interactive node expand/collapse behavior, study mode switching, default study document selection, flashcard flipping, quiz feedback, citation inspection, missed-question review, and Escape close.
+   All 5 test suites (14 unit tests) currently pass.
 
 ### Running Retrieval Evaluation Benchmarks
 Benchmark retrieval quality and compare `hybrid_rrf`, `cosine_baseline`, and `bm25_only`:
@@ -821,7 +875,12 @@ python -m app.reindex_documents --document-id <document-uuid>
 9. **Mind Map Structure Integrity**:
    The mind map parser expects a recursive JSON tree containing `id`, `label`, `query`, and `children`.
    Always validate tree nodes against `MindMapNodeSchema` before returning or caching them.
-10. **Single-File Summary Digest**:
+10. **Stateless Study Generation**:
+   Study Mode must remain stateless and must not add tables, Alembic revisions, or cached study records.
+   Every study item must pass through `resolve_citations` and must be dropped if it resolves no citation.
+   Study generation must reuse `OpenRouterAnswerGenerator` with `response_format={"type": "json_object"}` and `reasoning_effort="none"`, never the optional Gemini client.
+   Validate `correct_index` as an integer from 0 to 3 and always return four options for quiz questions.
+11. **Single-File Summary Digest**:
    A workspace-level agent orientation file lives at [`summary.md`](file:///home/shripad/Desktop/miniproject/summary.md).
    It summarizes the current architecture, structure, data model, pipelines, API, configuration, and operations in one file.
    Keep it synchronized with this document whenever architectural, schema, API, dependency, configuration, or frontend changes are introduced.

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -105,3 +105,34 @@ class MindMapOut(ORMModel):
     tree_data: dict[str, Any]
     created_at: datetime
     updated_at: datetime
+
+
+class StudyGenerateRequest(BaseModel):
+    mode: Literal["flashcards", "quiz"]
+    document_ids: list[UUID] | None = None
+    count: int = Field(default=8, ge=3, le=15)
+    difficulty: Literal["easy", "medium", "hard"] = "medium"
+
+
+class FlashcardItem(BaseModel):
+    id: str
+    front: str
+    back: str
+    source_references: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class QuizQuestionItem(BaseModel):
+    id: str
+    question: str
+    options: list[str]
+    correct_index: int
+    explanation: str
+    source_references: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class StudySetOut(BaseModel):
+    mode: Literal["flashcards", "quiz"]
+    difficulty: str
+    document_names: list[str]
+    flashcards: list[FlashcardItem] = Field(default_factory=list)
+    questions: list[QuizQuestionItem] = Field(default_factory=list)

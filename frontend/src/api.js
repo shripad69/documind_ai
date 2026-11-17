@@ -17,3 +17,13 @@ export function getErrorMessage(error) {
 }
 
 export default api;
+
+export async function generateStudySet(workspaceId, { mode, documentIds, count, difficulty }) {
+  const response = await api.post(`/api/workspaces/${workspaceId}/study`, {
+    mode,
+    document_ids: documentIds,
+    count,
+    difficulty,
+  });
+  return response.data;
+}
